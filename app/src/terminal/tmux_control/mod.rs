@@ -5,7 +5,7 @@ mod terminal_manager;
 use settings::Setting;
 use warpui::{AppContext, SingletonEntity};
 
-pub use sessions::{TmuxControlSessions, TmuxSessionKey};
+pub use sessions::{AttachTarget, TmuxControlEvent, TmuxControlSessions, TmuxSessionKey};
 pub use terminal_manager::{TmuxPaneBinding, TmuxTerminalManager};
 
 use crate::features::FeatureFlag;
