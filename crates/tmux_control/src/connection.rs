@@ -109,6 +109,12 @@ enum Tag {
     Restore { pane: PaneId, part: RestorePart },
 }
 
+/// A tag with the written line it belongs to.
+struct Queued {
+    line: u64,
+    tag: Tag,
+}
+
 fn fail(tags: impl IntoIterator<Item = Tag>) {
     for tag in tags {
         match tag {
@@ -146,8 +152,14 @@ impl WriterMsg {
 }
 
 enum PaneMode {
-    Live { paused: bool },
-    Restoring(PaneCapture),
+    Live {
+        paused: bool,
+    },
+    Restoring {
+        capture: PaneCapture,
+        /// Set when a part was unreadable; the rest of the line still runs but delivers nothing.
+        failed: bool,
+    },
 }
 
 struct PaneRoute {
@@ -156,6 +168,23 @@ struct PaneRoute {
 }
 
 impl PaneRoute {
+    /// Returns false if a restore is already in flight.
+    fn begin_restore(&mut self) -> bool {
+        if let PaneMode::Restoring { .. } = self.mode {
+            return false;
+        }
+        self.mode = PaneMode::Restoring {
+            capture: PaneCapture {
+                state: PaneState::default(),
+                history: Vec::new(),
+                visible: Vec::new(),
+                saved_normal: Vec::new(),
+            },
+            failed: false,
+        };
+        true
+    }
+
     /// Pauses the pane in tmux when the subscriber falls behind; it catches up with a restore.
     fn deliver(&mut self, pane: PaneId, event: PaneEvent, writer: &mpsc::Sender<WriterMsg>) {
         match self.sender.try_send(event) {
@@ -172,9 +201,8 @@ impl PaneRoute {
 }
 
 struct Shared {
-    /// Pushed only by the writer thread, under the same lock as the write, so it matches the
-    /// write order.
-    queue: CommandQueue<Tag>,
+    /// Pushed only by the writer thread, just before each write, so it matches the write order.
+    queue: CommandQueue<Queued>,
     panes: HashMap<PaneId, PaneRoute>,
     closed: bool,
 }
@@ -216,6 +244,7 @@ impl Connection {
         let mut writer_thread = WriterThread {
             shared: shared.clone(),
             writer,
+            next_line: 0,
         };
         spawn("tmux-writer", move || writer_thread.run(writer_rx));
 
@@ -248,6 +277,7 @@ impl Connection {
         Self::start(reader, writer, None, config)
     }
 
+    /// `line` must hold a single tmux command: each command in a line gets its own reply.
     pub fn command(&self, line: String) -> async_channel::Receiver<CommandResult> {
         let (tx, rx) = async_channel::bounded(1);
         self.queue(line, vec![Tag::Reply(tx)]);
@@ -273,22 +303,13 @@ impl Connection {
     }
 
     /// Sends the subscriber a `Restored` snapshot, dropping output until it arrives. Does nothing
-    /// for a pane without a subscriber.
+    /// for a pane without a subscriber or with a restore already in flight.
     pub fn restore_pane(&self, pane: PaneId) {
-        {
-            let mut shared = self.shared.lock();
-            let Some(route) = shared.panes.get_mut(&pane) else {
-                return;
-            };
-            route.mode = PaneMode::Restoring(PaneCapture {
-                state: PaneState::default(),
-                history: Vec::new(),
-                visible: Vec::new(),
-                saved_normal: Vec::new(),
-            });
+        let started =
+            (self.shared.lock().panes.get_mut(&pane)).is_some_and(PaneRoute::begin_restore);
+        if started {
+            self.queue_restore(pane);
         }
-        let tags = RESTORE_PARTS.map(|part| Tag::Restore { pane, part }).into();
-        self.queue(commands::restore_pane(pane), tags);
     }
 
     pub fn send_input(&self, pane: PaneId, bytes: &[u8]) {
@@ -308,17 +329,25 @@ impl Connection {
     pub fn resume_if_paused(&self, pane: PaneId) -> bool {
         {
             let mut shared = self.shared.lock();
-            match shared.panes.get_mut(&pane).map(|route| &mut route.mode) {
-                Some(PaneMode::Live { paused }) if *paused => *paused = false,
-                Some(PaneMode::Live { .. } | PaneMode::Restoring(_)) | None => return false,
-            }
+            let Some(route) = shared.panes.get_mut(&pane) else {
+                return false;
+            };
+            match route.mode {
+                PaneMode::Live { paused: true } => route.begin_restore(),
+                PaneMode::Live { paused: false } | PaneMode::Restoring { .. } => return false,
+            };
         }
-        self.restore_pane(pane);
+        self.queue_restore(pane);
         true
     }
 
     pub fn detach(&self) {
         self.queue(commands::detach_client(), vec![Tag::Ignore]);
+    }
+
+    fn queue_restore(&self, pane: PaneId) {
+        let tags = RESTORE_PARTS.map(|part| Tag::Restore { pane, part }).into();
+        self.queue(commands::restore_pane(pane), tags);
     }
 
     fn queue(&self, line: String, tags: Vec<Tag>) {
@@ -338,6 +367,7 @@ fn spawn(name: &str, body: impl FnOnce() + Send + 'static) {
 struct WriterThread<W> {
     shared: Arc<Mutex<Shared>>,
     writer: W,
+    next_line: u64,
 }
 
 impl<W: Write> WriterThread<W> {
@@ -365,28 +395,30 @@ impl<W: Write> WriterThread<W> {
         fail(messages.try_iter().flat_map(WriterMsg::into_tags));
     }
 
+    /// Queues the tags before writing, outside the lock so a stalled tmux can't block callers. No
+    /// reply can precede its write, and tags of a failed write are failed when tmux closes.
     fn write(&mut self, line: &str, tags: Vec<Tag>) {
-        let mut shared = self.shared.lock();
-        if shared.closed {
-            drop(shared);
-            fail(tags);
-            return;
+        {
+            let mut shared = self.shared.lock();
+            if shared.closed {
+                drop(shared);
+                fail(tags);
+                return;
+            }
+            for tag in tags {
+                shared.queue.push(Queued {
+                    line: self.next_line,
+                    tag,
+                });
+            }
         }
+        self.next_line += 1;
         let written = self
             .writer
             .write_all(format!("{line}\n").as_bytes())
             .and_then(|()| self.writer.flush());
-        match written {
-            Ok(()) => {
-                for tag in tags {
-                    shared.queue.push(tag);
-                }
-            }
-            Err(err) => {
-                drop(shared);
-                log::warn!("failed to write tmux command: {err}");
-                fail(tags);
-            }
+        if let Err(err) = written {
+            log::warn!("failed to write tmux command: {err}");
         }
     }
 }
@@ -453,9 +485,28 @@ impl ReaderThread {
             }
             return;
         }
-        let Some(tag) = self.shared.lock().queue.complete(&reply) else {
-            return;
+        let (tag, skipped) = {
+            let mut shared = self.shared.lock();
+            let Some(Queued { line, tag }) = shared.queue.complete(&reply) else {
+                return;
+            };
+            // tmux skips the rest of a line after a failed command, so those get no reply.
+            let skipped = if reply.success {
+                Vec::new()
+            } else {
+                shared.queue.pop_front_while(|queued| queued.line == line)
+            };
+            (tag, skipped)
         };
+        for Queued { tag, .. } in skipped {
+            match tag {
+                Tag::Reply(sender) => {
+                    let _ = sender.try_send(Err(CommandError::Tmux(join_body(&reply.body))));
+                }
+                // The failed part already ended the restore.
+                Tag::Ignore | Tag::Version | Tag::Restore { .. } => {}
+            }
+        }
         match tag {
             Tag::Ignore => {
                 if !reply.success {
@@ -520,7 +571,7 @@ impl ReaderThread {
         let Some(route) = shared.panes.get_mut(&pane) else {
             return;
         };
-        let PaneMode::Restoring(capture) = &mut route.mode else {
+        let PaneMode::Restoring { capture, failed } = &mut route.mode else {
             return;
         };
         if !reply.success {
@@ -529,6 +580,11 @@ impl ReaderThread {
                 join_body(&reply.body)
             );
             route.mode = PaneMode::Live { paused: false };
+            // tmux skipped the rest of the line, including its continue.
+            let _ = self.writer.send(WriterMsg::Line {
+                line: commands::continue_pane(pane),
+                tags: vec![Tag::Ignore],
+            });
             return;
         }
         match part {
@@ -538,7 +594,7 @@ impl ReaderThread {
                     Some(state) => capture.state = state,
                     None => {
                         log::warn!("restoring {pane} failed: unreadable pane state");
-                        route.mode = PaneMode::Live { paused: false };
+                        *failed = true;
                     }
                 }
             }
@@ -546,9 +602,11 @@ impl ReaderThread {
             RestorePart::Visible => capture.visible = reply.body,
             RestorePart::SavedNormal => capture.saved_normal = reply.body,
             RestorePart::Continue => {
-                let restored = restore_bytes(capture);
+                let restored = (!*failed).then(|| restore_bytes(capture));
                 route.mode = PaneMode::Live { paused: false };
-                route.deliver(pane, PaneEvent::Restored(restored), &self.writer);
+                if let Some(restored) = restored {
+                    route.deliver(pane, PaneEvent::Restored(restored), &self.writer);
+                }
             }
         }
     }
@@ -587,7 +645,11 @@ impl ReaderThread {
             let mut shared = self.shared.lock();
             shared.closed = true;
             shared.panes.clear();
-            shared.queue.drain().collect::<Vec<_>>()
+            shared
+                .queue
+                .drain()
+                .map(|queued| queued.tag)
+                .collect::<Vec<_>>()
         };
         fail(pending);
         let _ = self.writer.send(WriterMsg::Shutdown);

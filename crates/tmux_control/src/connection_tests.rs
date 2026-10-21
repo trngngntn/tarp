@@ -224,3 +224,76 @@ fn unsubscribe_closes_the_pane_receiver() {
     connection.unsubscribe_pane(PaneId(1));
     assert!(closes_within(&rx, W));
 }
+
+#[test]
+fn a_failed_restore_part_skips_the_rest_of_its_line_and_resumes_the_pane() {
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let rx = connection.subscribe_pane(PaneId(0));
+    connection.restore_pane(PaneId(0));
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
+    tmux.reply(&[]); // pause
+    tmux.reply(&["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2"]); // state
+    tmux.reply_error(&["boom"]); // history; tmux skips the rest of the line
+    assert_eq!(tmux.read_command(), commands::continue_pane(PaneId(0)));
+    let next = connection.command("x".into());
+    assert_eq!(tmux.read_command(), "x");
+    tmux.reply(&[]); // continue
+    tmux.reply(&["got x"]);
+    assert_eq!(recv_timeout(&next, W), Some(Ok(vec![b"got x".to_vec()])));
+    tmux.send("%output %0 live");
+    assert_eq!(
+        recv_timeout(&rx, W),
+        Some(PaneEvent::Output(b"live".to_vec()))
+    );
+}
+
+#[test]
+fn an_error_inside_a_line_fails_its_later_commands_and_keeps_replies_paired() {
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let (txs, rxs): (Vec<_>, Vec<_>) = (0..3).map(|_| async_channel::bounded(1)).unzip();
+    connection.queue(
+        "a ; b ; c".into(),
+        txs.into_iter().map(Tag::Reply).collect(),
+    );
+    let next = connection.command("next".into());
+    assert_eq!(tmux.read_command(), "a ; b ; c");
+    assert_eq!(tmux.read_command(), "next");
+    tmux.reply(&["A"]);
+    tmux.reply_error(&["b failed"]);
+    tmux.reply(&["N"]);
+    let failed = Some(Err(CommandError::Tmux("b failed".into())));
+    assert_eq!(recv_timeout(&rxs[0], W), Some(Ok(vec![b"A".to_vec()])));
+    assert_eq!(recv_timeout(&rxs[1], W), failed);
+    assert_eq!(recv_timeout(&rxs[2], W), failed);
+    assert_eq!(recv_timeout(&next, W), Some(Ok(vec![b"N".to_vec()])));
+}
+
+#[test]
+fn restore_while_restoring_is_ignored() {
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let rx = connection.subscribe_pane(PaneId(0));
+    connection.restore_pane(PaneId(0));
+    connection.restore_pane(PaneId(0));
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
+    assert_eq!(tmux.try_read_command(W), None);
+    for body in [
+        &[][..],
+        &["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2"],
+        &[],
+        &["ab", "cd", ""],
+        &[],
+        &[],
+    ] {
+        tmux.reply(body);
+    }
+    assert_eq!(
+        recv_timeout(&rx, W),
+        Some(PaneEvent::Restored(
+            b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H".to_vec()
+        ))
+    );
+    assert_eq!(recv_timeout(&rx, W), None);
+}
