@@ -3100,6 +3100,22 @@ impl BlockList {
         self.bootstrap_stage = BootstrapStage::Bootstrapped;
     }
 
+    /// Finishes the initial input block and opens a hidden-command block that is already
+    /// executing, so all later output lands in it without any shell hooks.
+    pub(super) fn enter_raw_mode(&mut self) {
+        self.active_block_mut().finish(0);
+        self.bootstrap_stage = BootstrapStage::PostBootstrapPrecmd;
+        self.create_new_block(
+            BlockId::new(),
+            BootstrapStage::PostBootstrapPrecmd,
+            None,
+            None,
+        );
+        self.start_active_block();
+        self.apply_preexec_to_active(PreexecValue::default());
+        self.active_block_mut().set_should_hide_command_grid(true);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.block_heights().summary().height.as_f64() < f64::EPSILON
     }

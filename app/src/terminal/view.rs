@@ -8833,7 +8833,7 @@ impl TerminalView {
     }
 
     pub fn is_input_box_visible(&self, model: &TerminalModel, app: &AppContext) -> bool {
-        if model.is_read_only() {
+        if model.is_raw() || model.is_read_only() {
             return false;
         }
         // Warp's own headless TUI (`warp_tui`) is itself an agent surface, so
@@ -9598,10 +9598,11 @@ impl TerminalView {
 
     pub fn is_long_running(&self) -> bool {
         let model = self.model.lock();
-        model
-            .block_list()
-            .active_block()
-            .is_active_and_long_running()
+        (model.is_raw()
+            || model
+                .block_list()
+                .active_block()
+                .is_active_and_long_running())
             && !model.is_read_only()
     }
 
@@ -9872,7 +9873,7 @@ impl TerminalView {
             .has_pending_or_bootstrapped_session();
         let is_shared_session_executor = model.shared_session_status().is_executor();
 
-        was_bootstrap_script_echoed || is_shared_session_executor
+        was_bootstrap_script_echoed || is_shared_session_executor || model.is_raw()
     }
     /// Receiving a warpui::Event::TypedCharacters event from a child element.
     /// We can assume `characters` consists of all printable characters, and therefore,
@@ -10045,10 +10046,11 @@ impl TerminalView {
             .sessions
             .as_ref(ctx)
             .has_pending_or_bootstrapped_session();
+        let is_raw = self.model.lock().is_raw();
         // Make sure we don't write any text to the pty until we've echoed out
         // the bootstrap script, otherwise the user could accidentally interfere
         // with bootstrap script execution.
-        if was_bootstrap_script_echoed && self.is_long_running() {
+        if (was_bootstrap_script_echoed || is_raw) && self.is_long_running() {
             self.clear_selected_blocks(ctx);
             self.update_scroll_position_locking(
                 ScrollPositionUpdate::AfterWriteUserBytesToPty,
@@ -16920,7 +16922,7 @@ impl TerminalView {
 
             // If we did actually bootstrap, or if the session is no longer usable
             // (e.g.: the shell process terminated), don't show a banner.
-            if model.is_read_only() || model.is_active_block_bootstrapped() {
+            if model.is_raw() || model.is_read_only() || model.is_active_block_bootstrapped() {
                 return;
             }
 

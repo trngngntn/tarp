@@ -2409,3 +2409,27 @@ fn cloud_mode_setup_phase_ended_does_not_emit_when_not_sharing() {
     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
     assert!(events.is_empty());
 }
+
+#[test]
+fn raw_mode_shows_output_in_an_executing_post_bootstrap_block() {
+    let mut model = TerminalModel::new_raw_for_test();
+    Processor::default().parse_bytes(&mut model, b"hello\r\n", &mut std::io::sink());
+    let block = model.block_list().active_block();
+    assert!(model.is_raw());
+    assert!(model.block_list().is_bootstrapping_precmd_done());
+    assert_eq!(block.bootstrap_stage(), BootstrapStage::PostBootstrapPrecmd);
+    assert_eq!(block.state(), BlockState::Executing);
+    assert_eq!(block.output_to_string(), "hello\n");
+}
+
+#[test]
+fn raw_mode_ignores_shell_integration_hooks() {
+    let mut model = TerminalModel::new_raw_for_test();
+    let before = model.block_list().active_block().id().clone();
+    model.precmd_with_completion_metadata(PrecmdValue {
+        completion_metadata: CompletionMetadata::default(),
+        prompt_metadata: PromptMetadata::default(),
+    });
+    model.preexec(PreexecValue::default());
+    assert_eq!(model.block_list().active_block().id(), &before);
+}

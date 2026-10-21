@@ -436,6 +436,10 @@ pub struct TerminalModel {
     /// cleared at the next precmd, because it is only relevant for the block where it was set.
     ignore_bootstrapping_messages: bool,
 
+    /// If true, the backend never runs Warp's shell bootstrap (e.g. a tmux control-mode pane), so
+    /// the model stays in a single executing block and ignores shell integration hooks.
+    is_raw: bool,
+
     // This session's startup directory path. If None, the startup directory is treated as default
     // (the user's home directory).
     session_startup_path: Option<PathBuf>,
@@ -1101,6 +1105,7 @@ impl TerminalModel {
             active_shell_launch_data: None,
             pending_session_info: None,
             ignore_bootstrapping_messages: false,
+            is_raw: false,
             session_startup_path,
             is_receiving_in_band_command_output: IsReceivingInBandCommandOutput::No,
             #[cfg(windows)]
@@ -1501,6 +1506,17 @@ impl TerminalModel {
 
     pub fn ignore_bootstrapping_messages(&mut self) {
         self.ignore_bootstrapping_messages = true;
+    }
+
+    /// Switches the model to a plain terminal whose output streams into one executing block.
+    pub fn enter_raw_mode(&mut self) {
+        self.ignore_bootstrapping_messages();
+        self.is_raw = true;
+        self.block_list.enter_raw_mode();
+    }
+
+    pub fn is_raw(&self) -> bool {
+        self.is_raw
     }
 
     /// Reacts to the PTY going away. For a shared ambient agent session with shell respawn
@@ -3034,6 +3050,9 @@ impl ansi::Handler for TerminalModel {
     }
 
     fn precmd_with_completion_metadata(&mut self, data: PrecmdValue) {
+        if self.is_raw {
+            return;
+        }
         let disposition = self
             .block_list
             .classify_next_block_id(&data.completion_metadata.next_block_id);
@@ -3073,6 +3092,9 @@ impl ansi::Handler for TerminalModel {
     }
 
     fn preexec(&mut self, data: PreexecValue) {
+        if self.is_raw {
+            return;
+        }
         let active_block = self.block_list.active_block();
         let observation = if active_block.state() == BlockState::Executing {
             if active_block.command_to_string() == data.command.as_str() {

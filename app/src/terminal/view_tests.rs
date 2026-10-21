@@ -11009,3 +11009,18 @@ fn visible_bootstrap_block_leaves_focus_on_tab_group_rename_editor() {
         }));
     });
 }
+
+#[test]
+fn raw_mode_routes_keys_to_the_pty_and_hides_the_input_box() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            view.model.lock().enter_raw_mode();
+            assert!(view.is_long_running());
+            assert!(view.should_write_typed_chars_to_pty(ctx));
+            let model = view.model.lock();
+            assert!(!view.is_input_box_visible(&model, ctx));
+        });
+    });
+}
