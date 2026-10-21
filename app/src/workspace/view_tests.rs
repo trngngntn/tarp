@@ -6223,6 +6223,8 @@ fn test_toggle_tmux_control_mode_flips_the_setting_and_context_flag() {
 mod tmux_control_tabs {
     use std::time::Duration;
 
+    use pathfinder_geometry::rect::RectF;
+    use pathfinder_geometry::vector::vec2f;
     use tmux_control::commands::{self, WindowInfo};
     use tmux_control::connection::{Connection, ConnectionConfig, ConnectionEvent};
     use tmux_control::testing::FakeTmux;
@@ -6230,6 +6232,7 @@ mod tmux_control_tabs {
 
     use super::*;
     use crate::terminal::tmux_control::{TmuxControlEvent, TmuxSessionKey};
+    use crate::workspace::cross_window_tab_drag::CrossWindowTabDrag;
 
     const KEY: TmuxSessionKey = TmuxSessionKey {
         session: SessionId(0),
@@ -6662,6 +6665,30 @@ mod tmux_control_tabs {
                     .await
                     .contains(&commands::detach_client())
             );
+        });
+    }
+
+    #[test]
+    fn test_tmux_tab_cannot_be_dragged_to_another_window() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        let _drag = FeatureFlag::DragTabsToWindows.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (_tmux, connection, _events) = fake_tmux();
+            workspace.update(&mut app, |workspace, ctx| {
+                let event = attached(ZSH_AND_CLAUDE, &connection, workspace.window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+                let tmux_tab = workspace.tabs[1].pane_group.id();
+                // Far below the tab bar, where a drag leaves for another window.
+                let below_tab_bar = RectF::new(vec2f(0., 500.), vec2f(100., 30.));
+                workspace.on_tab_drag(1, below_tab_bar, ctx);
+                assert!(!workspace.tabs[1].detached);
+                assert_eq!(workspace.tabs[1].pane_group.id(), tmux_tab);
+                assert!(workspace.get_tab_transfer_info_for_attach(1, ctx).is_none());
+            });
+            app.read(|ctx| assert!(!CrossWindowTabDrag::as_ref(ctx).is_active()));
         });
     }
 

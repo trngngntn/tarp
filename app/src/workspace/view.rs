@@ -29112,9 +29112,12 @@ impl View for Workspace {
 // ---- Tab drag: local reordering, cross-window initiation, drop handling ----
 impl Workspace {
     /// Builds a `TransferredTab` snapshot for the tab at `index`, or `None`
-    /// if the index is out of bounds.
+    /// if the index is out of bounds or the tab shows a tmux window.
     fn tab_transfer_info_at_index(&self, index: usize, ctx: &AppContext) -> Option<TransferredTab> {
-        let tab = self.tabs.get(index)?;
+        let tab = self
+            .tabs
+            .get(index)
+            .filter(|tab| !self.is_tmux_window_tab(tab.pane_group.id()))?;
         let pane_group = tab.pane_group.clone();
         let color = tab.color();
         let draggable_state = tab.draggable_state.clone();
@@ -29738,7 +29741,10 @@ impl Workspace {
         }
 
         let source_is_single_tab = self.tabs.len() == 1;
+        // A tmux tab stays in the window that attached its session.
+        let is_tmux_tab = self.is_tmux_window_tab(self.tabs[current_index].pane_group.id());
         if (is_drag_outside_tab_bar || source_is_single_tab)
+            && !is_tmux_tab
             && FeatureFlag::DragTabsToWindows.is_enabled()
         {
             let source_was_single_tab = source_is_single_tab;
