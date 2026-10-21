@@ -322,10 +322,10 @@ use crate::suggestions::ignored_suggestions_model::IgnoredSuggestionsModel;
 use crate::system::SystemStats;
 use crate::tab::TabShortcutModifierState;
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
-#[cfg(not(target_family = "wasm"))]
-use crate::terminal::tmux_control::TmuxControlSessions;
 use crate::terminal::keys::TerminalKeybindings;
 use crate::terminal::resizable_data::ResizableData;
+#[cfg(not(target_family = "wasm"))]
+use crate::terminal::tmux_control::TmuxControlSessions;
 use crate::terminal::view::inline_banner::ByoLlmAuthBannerSessionState;
 use crate::terminal::{AudibleBell, CustomSecretRegexUpdater, History};
 #[cfg(feature = "tui")]

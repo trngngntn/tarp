@@ -3,10 +3,9 @@ use std::time::Duration;
 
 use futures::executor::block_on;
 use parking_lot::FairMutex;
-use tmux_control::commands;
 use tmux_control::connection::{Connection, ConnectionConfig, PaneEvent};
 use tmux_control::testing::FakeTmux;
-use tmux_control::{PaneId, SessionId, WindowId as TmuxWindowId};
+use tmux_control::{PaneId, SessionId, WindowId as TmuxWindowId, commands};
 
 use super::*;
 use crate::terminal::event_listener::ChannelEventListener;
