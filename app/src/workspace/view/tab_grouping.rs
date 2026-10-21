@@ -1671,7 +1671,7 @@ const TMUX_RENAME_WARN: std::time::Duration = std::time::Duration::from_secs(30)
 #[cfg(not(target_family = "wasm"))]
 mod tmux_agents {
     use std::collections::{HashMap, HashSet};
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::process::Command;
 
     use tmux_control::tmux_binary;
