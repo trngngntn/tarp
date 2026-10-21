@@ -1088,6 +1088,19 @@ pub fn init(app: &mut AppContext) {
         ),
     ]);
 
+    settings_view::ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(
+        vec![
+            settings_view::ToggleSettingActionPair::new(
+                "tmux control mode",
+                WorkspaceAction::ToggleTmuxControlMode,
+                &id!("Workspace"),
+                flags::TMUX_CONTROL_MODE_CONTEXT_FLAG,
+            )
+            .with_enabled(|| FeatureFlag::TmuxControlMode.is_enabled()),
+        ],
+        app,
+    );
+
     app.register_editable_bindings([
         EditableBinding::new(
             "workspace:terminate_app",

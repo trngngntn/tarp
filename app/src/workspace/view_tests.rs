@@ -80,6 +80,8 @@ use crate::terminal::local_tty::spawner::PtySpawner;
 use crate::terminal::shared_session::{
     SharedSessionScrollbackType, SharedSessionSource, SharedSessionStatus,
 };
+#[cfg(not(target_family = "wasm"))]
+use crate::terminal::tmux_control::tmux_control_mode_enabled;
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::undo_close::UndoCloseSettings;
 #[cfg(feature = "local_fs")]
@@ -6181,5 +6183,26 @@ fn test_tmux_adopt_does_nothing_while_the_integration_is_off() {
             assert_eq!(workspace.tabs.len(), tabs_before);
         });
         assert!(unset.borrow().is_empty());
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn test_toggle_tmux_control_mode_flips_the_setting_and_context_flag() {
+    let _flag = FeatureFlag::TmuxControlMode.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            assert!(!tmux_control_mode_enabled(ctx));
+            workspace.handle_action(&WorkspaceAction::ToggleTmuxControlMode, ctx);
+            assert!(tmux_control_mode_enabled(ctx));
+            assert!(
+                workspace
+                    .keymap_context(ctx)
+                    .set
+                    .contains(flags::TMUX_CONTROL_MODE_CONTEXT_FLAG)
+            );
+        });
     });
 }

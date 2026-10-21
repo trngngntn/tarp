@@ -4011,7 +4011,8 @@ impl Workspace {
             }
             // The next tmux poll (every 10 s) reads the new values.
             TabSettingsChangedEvent::TmuxSyncEnabled { .. }
-            | TabSettingsChangedEvent::TmuxSessionScript { .. } => {}
+            | TabSettingsChangedEvent::TmuxSessionScript { .. }
+            | TabSettingsChangedEvent::TmuxControlMode { .. } => {}
             TabSettingsChangedEvent::UseVerticalTabs { .. } => {
                 let vertical_tabs_enabled = *TabSettings::as_ref(ctx).use_vertical_tabs;
                 // During HOA onboarding, keep the vertical tabs panel open
@@ -23908,6 +23909,10 @@ impl Workspace {
             context.set.insert(flags::WARP_SAME_LINE_PROMPT_FLAG);
         }
 
+        if *tab_settings.tmux_control_mode.value() {
+            context.set.insert(flags::TMUX_CONTROL_MODE_CONTEXT_FLAG);
+        }
+
         if *ssh_settings.reuse_existing_control_master.value() {
             context
                 .set
@@ -25884,6 +25889,13 @@ impl Workspace {
                     ),
                     ctx
                 );
+                ctx.notify();
+            }
+            ToggleTmuxControlMode => {
+                TabSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    let new_value = !*settings.tmux_control_mode.value();
+                    let _ = settings.tmux_control_mode.set_value(new_value, ctx);
+                });
                 ctx.notify();
             }
             ToggleAgentManagementView => {

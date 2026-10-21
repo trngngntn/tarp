@@ -76,6 +76,8 @@ pub mod universal_developer_input;
 pub mod ssh;
 pub mod terminal_manager;
 mod terminal_size_element;
+#[cfg(not(target_family = "wasm"))]
+pub mod tmux_control;
 pub mod view;
 pub mod warpify;
 mod waterfall_gap_element;

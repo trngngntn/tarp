@@ -892,6 +892,9 @@ pub enum FeatureFlag {
     /// are protected from reordering.
     PinnedTabs,
 
+    /// Gates tmux control mode tabs, which open a tmux session as one tab per tmux window.
+    TmuxControlMode,
+
     /// Gates the SuperGrok feature, which lets users
     /// connect a Grok subscription instead of pasting an API key.
     SuperGrok,
@@ -1029,6 +1032,7 @@ pub const LOCAL_FLAGS: &[FeatureFlag] = &[
 /// Features enabled for the development team.  The expectation is that, over
 /// time, these will move on to PREVIEW_FLAGS before being launched.
 pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
+    FeatureFlag::TmuxControlMode,
     FeatureFlag::LogExpensiveFramesInSentry,
     FeatureFlag::ToggleBootstrapBlock,
     FeatureFlag::CreatingSharedSessions,
