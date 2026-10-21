@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/hero-dark.png">
-    <img src="images/hero-light.png" width="800" alt="Harp: the app icon and name above a Harp window with sessions grouped in the sidebar and a Claude Code session at work, with agents working, waiting for you, done and set aside">
+    <img src="images/hero-light.png" width="800" alt="Tarp: the app icon and name above a Tarp window with sessions grouped in the sidebar and a Claude Code session at work, with agents working, waiting for you, done and set aside">
   </picture>
 </p>
 
@@ -14,7 +14,8 @@
   <img alt="Platform: macOS" src="https://img.shields.io/badge/platform-macOS-lightgrey">
 </p>
 
-Harp is an unofficial fork of the open-source [Warp](https://github.com/warpdotdev/warp) terminal.
+Tarp is a fork of [Harp](https://github.com/dominikmartn/harp), itself an unofficial fork of the
+open-source [Warp](https://github.com/warpdotdev/warp) terminal.
 It replaces the tab bar with a sidebar built for long-running coding agents and keeps the rest of
 Warp as it is.
 
@@ -52,7 +53,7 @@ Warp as it is.
     </td>
     <td width="50%" valign="top">
       <h3>Limit rings</h3>
-      <p>Two rings per provider in the footer: the 5 hour window and the weekly limit. Harp reads
+      <p>Two rings per provider in the footer: the 5 hour window and the weekly limit. Tarp reads
       the numbers from a local JSON file that a tool of your choice keeps current
       (<a href="docs/limit-rings.md">format</a>); it never fetches them itself.</p>
       <h3>Phone-friendly tmux</h3>
@@ -64,26 +65,23 @@ Warp as it is.
 </table>
 
 Everything else is upstream Warp, including its AI and cloud features (agents, Warp Drive, session
-sharing, login). They talk to Warp's servers exactly as upstream does; Harp adds no servers of its
-own. Logging in through Harp is untested.
+sharing, login). They talk to Warp's servers exactly as upstream does; Tarp adds no servers of its
+own. Logging in through Tarp is untested.
 
 ## Install
 
-**Download:** grab the latest `Harp-<version>.dmg` from [Releases](../../releases/latest) and drag
-Harp into Applications. Harp has its own bundle id (`com.dominikmartn.Harp`), URL scheme (`harp://`)
-and settings folder (`~/.harp`), so it runs next to Warp without sharing anything.
+**Download:** grab the latest `Tarp-<version>.dmg` from [Releases](../../releases/latest) and drag
+Tarp into Applications. Tarp has its own bundle id (`com.trngngntn.Tarp`), URL scheme (`tarp://`)
+and settings folder (`~/.tarp`), so it runs next to Warp without sharing anything. On first launch it
+copies an existing `~/.harp` to `~/.tarp` and leaves the original untouched.
 
-**Updates:** Harp checks the latest GitHub release every 10 minutes, the same way Warp checks its
-own server. When the release's version is newer than `version` in `app/Cargo.toml` of the running
-build, Harp downloads its DMG in the background, checks that it is signed by Harp's Developer ID
-team, and offers to restart into it. To try this on an installed build, launch it with an older
-version: `open --env HARP_UPDATE_PRETEND_VERSION=0.0.1 /Applications/Harp.app`.
+**Updates:** auto-update is off; install new versions by hand.
 
 **Build from source** (macOS, Rust toolchain from `rust-toolchain.toml`):
 
 ```sh
 ./script/bootstrap   # one-time: toolchain and build dependencies
-./script/run         # builds target/debug/bundle/osx/Harp.app and launches it
+./script/run         # builds target/debug/bundle/osx/Tarp.app and launches it
 ```
 
 `script/macos/run` signs with the first "Apple Development" identity in your keychain and falls
@@ -92,7 +90,7 @@ back to an ad-hoc signature. A signed, notarizable release DMG comes from `scrip
 
 ## Settings
 
-The extras are off by default. Turn them on in `~/.harp/settings.toml`; the app reloads the file
+The extras are off by default. Turn them on in `~/.tarp/settings.toml`; the app reloads the file
 when it changes.
 
 ```toml
@@ -124,15 +122,15 @@ sidebar layout (new tabs come from Cmd+T, a double-click or the right-click menu
 space), the sidebar divider option and the title-strip panel toggles.
 
 **Development switches** (environment, at launch): `WARPOSS_STATUS_TRACE=1` logs every change of a
-row's shown status to `~/Library/Logs/harp.log` as a `[status-check]` line, for regression checks
+row's shown status to `~/Library/Logs/tarp.log` as a `[status-check]` line, for regression checks
 against an agent's transcript. `WARPOSS_SKIP_LOGIN=1` starts with a test user and fails every
 authenticated request, for automated runs without a login. `WARP_DATA_PROFILE=<name>` (debug
-builds) keeps settings and data in `~/.harp-<name>`.
+builds) keeps settings and data in `~/.tarp-<name>`.
 
 **Identity:** the name comes from `app_display_name!()` in `app/src/lib.rs`. Bundle id, URL scheme
 and settings folder are set in `app/Cargo.toml`, `app/src/bin/oss.rs`,
 `crates/warp_core/src/channel/state.rs`, `crates/warp_core/src/paths.rs`, `script/macos/bundle`,
-`script/macos/run`, `crates/warpui/src/browser.rs`, `app/channels/oss/com.dominikmartn.Harp.desktop`
+`script/macos/run`, `crates/warpui/src/browser.rs`, `app/channels/oss/com.trngngntn.Tarp.desktop`
 and `flake.nix`. Internal names stay Warp's: the `warp-oss` binary, the crates, the `WARPOSS_*`
 switches and the `@warp_*` tmux options other tmux clients read.
 
@@ -142,13 +140,13 @@ Run `./script/presubmit` (format, clippy, tests) before sending changes.
 
 ## Based on Warp
 
-Harp is an unofficial fork of [warpdotdev/warp](https://github.com/warpdotdev/warp) and is not
+Tarp is a fork of Tarp and, through it, an unofficial fork of [warpdotdev/warp](https://github.com/warpdotdev/warp) and is not
 made, endorsed or supported by Warp (Denver Technologies, Inc.) or affiliated with them. "Warp" is
-their name. Please report issues with Harp here, not to Warp.
+their name. Please report issues with Tarp here, not to Warp.
 
 ## Credits
 
-- [Warp](https://github.com/warpdotdev/warp), the terminal Harp is built on, and the open-source
+- [Warp](https://github.com/warpdotdev/warp), the terminal Tarp is built on, and the open-source
   projects it depends on ([list](https://docs.warp.dev/help/licenses)).
 - Sidebar icons from the [Hugeicons](https://hugeicons.com) free set (MIT) and
   [Phosphor](https://phosphoricons.com) (MIT); the licenses are in

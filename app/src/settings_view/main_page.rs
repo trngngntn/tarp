@@ -4,6 +4,7 @@ use ::settings::{Setting, ToggleableSetting};
 use lazy_static::lazy_static;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
+use warp_core::channel::ChannelState;
 use warp_core::context_flag::ContextFlag;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::icons::Icon;
@@ -296,7 +297,7 @@ impl MainSettingsPageView {
             })
         }
 
-        if autoupdate::current_version().is_some() {
+        if ChannelState::app_version().is_some() {
             widgets.push(Box::new(VersionInfoWidget::default()));
         }
 
@@ -886,7 +887,7 @@ impl VersionInfoWidget {
                             color: ansi_red,
                         }),
                         Some(CallToActionContent {
-                            text: "Relaunch Harp",
+                            text: "Relaunch Warp",
                             action: MainPageAction::Relaunch,
                         }),
                     ),
@@ -903,7 +904,7 @@ impl VersionInfoWidget {
                             color: faded_text_color,
                         }),
                         Some(CallToActionContent {
-                            text: "Relaunch Harp",
+                            text: "Relaunch Warp",
                             action: MainPageAction::Relaunch,
                         }),
                     ),
@@ -913,7 +914,7 @@ impl VersionInfoWidget {
                             color: ansi_red,
                         }),
                         Some(CallToActionContent {
-                            text: "Update Harp manually",
+                            text: "Update Warp manually",
                             // note: the handler for this action is a no-op
                             action: MainPageAction::DownloadUpdate,
                         }),
@@ -924,7 +925,7 @@ impl VersionInfoWidget {
                             color: ansi_red,
                         }),
                         Some(CallToActionContent {
-                            text: "Update Harp manually",
+                            text: "Update Warp manually",
                             // note: the handler for this action is a no-op
                             action: MainPageAction::DownloadUpdate,
                         }),
@@ -1048,7 +1049,7 @@ impl SettingsWidget for VersionInfoWidget {
         appearance: &Appearance,
         app: &AppContext,
     ) -> Box<dyn Element> {
-        if let Some(version) = autoupdate::current_version() {
+        if let Some(version) = ChannelState::app_version() {
             Container::new(self.render_version_info(version, appearance, app))
                 .with_margin_top(VERTICAL_MARGIN)
                 .finish()

@@ -1808,9 +1808,9 @@ impl AccountFirstCompletion {
 /// authentication.
 const HAS_COMPLETED_ONBOARDING_KEY: &str = "HasCompletedOnboarding";
 
-/// ponytail: Harp skips Warp's onboarding slides (Warp branding, account step, AI setup) and opens
+/// ponytail: Tarp skips Warp's onboarding slides (Warp branding, account step, AI setup) and opens
 /// the terminal on first launch, the same state "Skip for now" leads to. Warp's login stays
-/// reachable later. Upgrade path: a first-run screen of Harp's own.
+/// reachable later. Upgrade path: a first-run screen of Tarp's own.
 const SHOW_WARP_ONBOARDING: bool = false;
 
 /// Returns whether the user has completed the onboarding slides locally (before login).

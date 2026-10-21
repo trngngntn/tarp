@@ -499,7 +499,7 @@ define_settings_group!(TabSettings, settings: [
     },
     use_vertical_tabs: UseVerticalTabs {
         type: bool,
-        // Harp: the sidebar is the product, and without Warp's onboarding nothing else turns it on.
+        // Tarp: the sidebar is the product, and without Warp's onboarding nothing else turns it on.
         default: true,
         supported_platforms: SupportedPlatforms::ALL,
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),

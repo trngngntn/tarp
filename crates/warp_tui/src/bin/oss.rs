@@ -28,6 +28,7 @@ fn main() -> Result<()> {
         state = state.with_additional_features(warp_core::features::DEBUG_FLAGS);
     }
     ChannelState::set(state);
+    warp_core::paths::migrate_legacy_home_config_dir();
 
     warp_tui::run()
 }

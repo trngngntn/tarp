@@ -1041,8 +1041,8 @@ cloud_agent_shell_respawn = []
 [package.metadata.bundle.bin.warp-oss]
 category = "public.app-category.developer-tools"
 copyright = "© 2025, Denver Technologies, Inc"
-identifier = "com.dominikmartn.Harp"
-name = "Harp"
+identifier = "com.trngngntn.Tarp"
+name = "Tarp"
 resources = ["assets/onboarding"]
 icon = [
     "channels/oss/icon/no-padding/16x16.png",

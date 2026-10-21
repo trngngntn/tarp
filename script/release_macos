@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a signed Harp release for macOS: release bundle, Developer ID signature with the
+# Builds a signed Tarp release for macOS: release bundle, Developer ID signature with the
 # hardened runtime, DMG. Notarization is a separate step that only runs with --notarize.
 #
 #   script/release_macos [--host <ssh-host>] [--universal] [--skip-build] [--notarize] [--dry-run]
@@ -7,16 +7,16 @@
 # --host        Build on another Mac over ssh (the tree at HEAD is copied there with git archive,
 #               the bundle is copied back). Signing always happens here, where the keychain is.
 # --universal   Build arm64 + x86_64 (default: arm64 only, about half the build time).
-# --skip-build  Reuse dist/Harp.app from an earlier run and only sign and package.
+# --skip-build  Reuse dist/Tarp.app from an earlier run and only sign and package.
 # --notarize    Submit the DMG to Apple, wait, staple and validate. Without it nothing leaves
 #               this machine.
 # --dry-run     Check the toolchain and the signing identity and print each step, run nothing.
 #
 # Environment:
-#   HARP_SIGN_IDENTITY  codesign identity. Default: the only "Developer ID Application" identity
+#   TARP_SIGN_IDENTITY  codesign identity. Default: the only "Developer ID Application" identity
 #                       in the keychain (fails if there is none or more than one).
-#   HARP_REMOTE_DIR     Work dir on --host, relative to its home (default Developer/_tmp/harp-release).
-#   HARP_REMOTE_PATH    PATH prefix on --host so cargo is found
+#   TARP_REMOTE_DIR     Work dir on --host, relative to its home (default Developer/_tmp/tarp-release).
+#   TARP_REMOTE_PATH    PATH prefix on --host so cargo is found
 #                       (default /opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:$HOME/.cargo/bin).
 #   Notarization, one of:
 #     NOTARY_PROFILE    a profile saved with `xcrun notarytool store-credentials`, or
@@ -40,14 +40,14 @@ while (($#)); do
 done
 
 DIST="$ROOT/dist"
-APP="$DIST/Harp.app"
-ENTITLEMENTS="$ROOT/script/macos/Harp-Entitlements.plist"
-REMOTE_DIR="${HARP_REMOTE_DIR:-Developer/_tmp/harp-release}"
-REMOTE_PATH="${HARP_REMOTE_PATH:-/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:\$HOME/.cargo/bin}"
+APP="$DIST/Tarp.app"
+ENTITLEMENTS="$ROOT/script/macos/Tarp-Entitlements.plist"
+REMOTE_DIR="${TARP_REMOTE_DIR:-Developer/_tmp/tarp-release}"
+REMOTE_PATH="${TARP_REMOTE_PATH:-/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:\$HOME/.cargo/bin}"
 BUNDLE_ARGS=(--channel oss --nosign)
 [[ $UNIVERSAL == true ]] || BUNDLE_ARGS+=(--arch aarch64)
 # script/macos/bundle copies the finished bundle here for every architecture choice.
-BUNDLE_OUT="target/release-lto/bundle/osx/Harp.app"
+BUNDLE_OUT="target/release-lto/bundle/osx/Tarp.app"
 
 run() {
   echo "+ $*"
@@ -63,13 +63,13 @@ for tool in codesign hdiutil xcrun git; do
 done
 [[ -f "$ENTITLEMENTS" ]] || { echo "missing $ENTITLEMENTS" >&2; exit 1; }
 
-if [[ -n "${HARP_SIGN_IDENTITY:-}" ]]; then
-  IDENTITY="$HARP_SIGN_IDENTITY"
+if [[ -n "${TARP_SIGN_IDENTITY:-}" ]]; then
+  IDENTITY="$TARP_SIGN_IDENTITY"
 else
   matches="$(security find-identity -v -p codesigning | grep '"Developer ID Application' || true)"
   count="$(printf '%s' "$matches" | grep -c . || true)"
   if [[ "$count" != 1 ]]; then
-    echo "found $count Developer ID Application identities; set HARP_SIGN_IDENTITY" >&2
+    echo "found $count Developer ID Application identities; set TARP_SIGN_IDENTITY" >&2
     printf '%s\n' "$matches" >&2
     exit 1
   fi
@@ -128,13 +128,13 @@ VERSION="unknown"
 if [[ -f "$APP/Contents/Info.plist" ]]; then
   VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")"
 fi
-DMG="$DIST/Harp-$VERSION.dmg"
+DMG="$DIST/Tarp-$VERSION.dmg"
 STAGE="$DIST/dmg-stage"
 run rm -rf "$STAGE" "$DMG"
 run mkdir -p "$STAGE"
 run cp -R "$APP" "$STAGE/"
 run ln -s /Applications "$STAGE/Applications"
-run hdiutil create -volname Harp -srcfolder "$STAGE" -fs APFS -format UDZO "$DMG"
+run hdiutil create -volname Tarp -srcfolder "$STAGE" -fs APFS -format UDZO "$DMG"
 run rm -rf "$STAGE"
 run codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 

@@ -5,7 +5,7 @@
 /// A macro rather than a const so `concat!` can build the menu labels at compile time.
 macro_rules! app_display_name {
     () => {
-        "Harp"
+        "Tarp"
     };
 }
 

@@ -8,11 +8,11 @@ fn test_data_dir_path() {
     // ChannelState, by default, is configured for Channel::Oss.
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            assert_eq!(data_dir(), home_dir.join(".harp"));
+            assert_eq!(data_dir(), home_dir.join(".tarp"));
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(data_dir(), home_dir.join(".local/share/harp"));
+            assert_eq!(data_dir(), home_dir.join(".local/share/tarp"));
         } else if #[cfg(windows)] {
-            assert_eq!(data_dir(), home_dir.join("AppData\\Roaming\\dominikmartn\\Harp\\data"));
+            assert_eq!(data_dir(), home_dir.join("AppData\\Roaming\\trngngntn\\Tarp\\data"));
         } else {
             unimplemented!("Need to update tests for current platform!");
         }
@@ -25,11 +25,11 @@ fn test_config_local_dir_path() {
     // ChannelState, by default, is configured for Channel::Oss.
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            assert_eq!(config_local_dir(), home_dir.join(".harp"));
+            assert_eq!(config_local_dir(), home_dir.join(".tarp"));
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(config_local_dir(), home_dir.join(".config/harp"));
+            assert_eq!(config_local_dir(), home_dir.join(".config/tarp"));
         } else if #[cfg(windows)] {
-            assert_eq!(config_local_dir(), home_dir.join("AppData\\Local\\dominikmartn\\Harp\\config"));
+            assert_eq!(config_local_dir(), home_dir.join("AppData\\Local\\trngngntn\\Tarp\\config"));
         } else {
             unimplemented!("Need to update tests for current platform!");
         }
@@ -61,7 +61,7 @@ fn test_macos_config_dir_name_scopes_to_data_profile() {
 fn test_gui_app_id_maps_oss_tui_to_oss_gui() {
     let gui_app_id = gui_app_id_for_channel(Channel::Oss, AppId::new("dev", "warp", "WarpTui"));
 
-    assert_eq!(gui_app_id.to_string(), "com.dominikmartn.Harp");
+    assert_eq!(gui_app_id.to_string(), "com.trngngntn.Tarp");
 }
 
 #[test]
@@ -71,13 +71,13 @@ fn test_gui_config_and_mcp_paths_resolve_explicit_sources() {
 
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            assert_eq!(gui_config_dir, home_dir.join(".harp"));
+            assert_eq!(gui_config_dir, home_dir.join(".tarp"));
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(gui_config_dir, home_dir.join(".config/harp"));
+            assert_eq!(gui_config_dir, home_dir.join(".config/tarp"));
         } else if #[cfg(windows)] {
             assert_eq!(
                 gui_config_dir,
-                home_dir.join("AppData\\Local\\dominikmartn\\Harp\\config")
+                home_dir.join("AppData\\Local\\trngngntn\\Tarp\\config")
             );
         } else {
             unimplemented!("Need to update tests for current platform!");
@@ -90,8 +90,8 @@ fn test_gui_config_and_mcp_paths_resolve_explicit_sources() {
 fn test_warp_home_config_dir_path() {
     let home_dir = home_dir().expect("Should be able to compute home directory");
     let expected_dir_name = match ChannelState::data_profile() {
-        Some(data_profile) => format!(".harp-{data_profile}"),
-        None => ".harp".to_string(),
+        Some(data_profile) => format!(".tarp-{data_profile}"),
+        None => ".tarp".to_string(),
     };
 
     assert_eq!(
@@ -220,4 +220,54 @@ fn test_project_path_for_oss_app_id() {
             unimplemented!("Need to update tests for current platform!");
         }
     }
+}
+
+#[test]
+fn copy_dir_if_absent_copies_recursively_and_keeps_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join(".harp");
+    let destination = temp.path().join(".tarp");
+    std::fs::create_dir_all(source.join("skills")).unwrap();
+    std::fs::write(source.join("settings.toml"), "a = 1").unwrap();
+    std::fs::write(source.join("skills/one.md"), "skill").unwrap();
+
+    copy_dir_if_absent(&source, &destination).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(destination.join("settings.toml")).unwrap(),
+        "a = 1"
+    );
+    assert_eq!(
+        std::fs::read_to_string(destination.join("skills/one.md")).unwrap(),
+        "skill"
+    );
+    assert!(source.join("settings.toml").exists());
+}
+
+#[test]
+fn copy_dir_if_absent_never_overwrites_existing_destination() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join(".harp");
+    let destination = temp.path().join(".tarp");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&destination).unwrap();
+    std::fs::write(source.join("settings.toml"), "old").unwrap();
+    std::fs::write(destination.join("settings.toml"), "new").unwrap();
+
+    copy_dir_if_absent(&source, &destination).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(destination.join("settings.toml")).unwrap(),
+        "new"
+    );
+}
+
+#[test]
+fn copy_dir_if_absent_ignores_missing_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let destination = temp.path().join(".tarp");
+
+    copy_dir_if_absent(&temp.path().join(".harp"), &destination).unwrap();
+
+    assert!(!destination.exists());
 }
