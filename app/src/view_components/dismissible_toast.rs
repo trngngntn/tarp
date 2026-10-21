@@ -211,6 +211,10 @@ impl<A: Action + Clone> DismissibleToastStack<A> {
     }
 
     /// Returns whether the stack currently has any toasts.
+    pub fn has_toasts(&self) -> bool {
+        !self.toasts.is_empty()
+    }
+
     /// The main text of each toast, oldest first. Only available in tests.
     #[cfg(test)]
     pub fn toast_texts(&self) -> Vec<String> {
@@ -218,10 +222,6 @@ impl<A: Action + Clone> DismissibleToastStack<A> {
             .iter()
             .map(|toast| toast.dismissible_toast.main_text.clone())
             .collect()
-    }
-
-    pub fn has_toasts(&self) -> bool {
-        !self.toasts.is_empty()
     }
 }
 

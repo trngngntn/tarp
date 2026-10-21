@@ -4032,8 +4032,9 @@ impl Workspace {
             }
             // The next tmux poll (every 10 s) reads the new values.
             TabSettingsChangedEvent::TmuxSyncEnabled { .. }
-            | TabSettingsChangedEvent::TmuxSessionScript { .. }
-            | TabSettingsChangedEvent::TmuxControlMode { .. } => {}
+            | TabSettingsChangedEvent::TmuxSessionScript { .. } => {}
+            // Read when an attach is requested.
+            TabSettingsChangedEvent::TmuxControlMode { .. } => {}
             TabSettingsChangedEvent::UseVerticalTabs { .. } => {
                 let vertical_tabs_enabled = *TabSettings::as_ref(ctx).use_vertical_tabs;
                 // During HOA onboarding, keep the vertical tabs panel open
@@ -12217,7 +12218,7 @@ impl Workspace {
         } else {
             None
         };
-        let tabs: Vec<TabSnapshot> = self
+        let (kept_tab_indices, tabs): (Vec<usize>, Vec<TabSnapshot>) = self
             .tab_views()
             .enumerate()
             .filter(|(tab_index, _)| Some(*tab_index) != transferred_tab_index)
@@ -12246,7 +12247,7 @@ impl Workspace {
                     self.compute_left_panel_snapshot(pane_group_view, left_panel_width, app);
                 let right_panel =
                     self.compute_right_panel_snapshot(pane_group_view, right_panel_width, app);
-                TabSnapshot {
+                let tab = TabSnapshot {
                     root,
                     custom_title: pane_group.custom_title(app),
                     default_directory_color: self
@@ -12269,9 +12270,10 @@ impl Workspace {
                     // enabled.
                     pinned: FeatureFlag::PinnedTabs.is_enabled()
                         && self.tabs.get(tab_index).is_some_and(|tab| tab.pinned),
-                }
+                };
+                (tab_index, tab)
             })
-            .filter(|tab| {
+            .filter(|(_, tab)| {
                 // Filter out any tab that contains a single, read-only session.
                 !matches!(
                     tab.root,
@@ -12284,7 +12286,13 @@ impl Workspace {
                     })
                 )
             })
-            .collect();
+            .unzip();
+        // The skipped tabs shift the rest, and the active one may be among them.
+        let active_tab_index = kept_tab_indices
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, tab_index)| tab_index.abs_diff(active_tab_index))
+            .map_or(0, |(snapshot_index, _)| snapshot_index);
 
         // Skip orphan groups whose members were all filtered out above.
         // This is a safety net and ensures empty groups are not saved/restored.
@@ -25929,7 +25937,7 @@ impl Workspace {
             ToggleTmuxControlMode => {
                 TabSettings::handle(ctx).update(ctx, |settings, ctx| {
                     let new_value = !*settings.tmux_control_mode.value();
-                    let _ = settings.tmux_control_mode.set_value(new_value, ctx);
+                    report_if_error!(settings.tmux_control_mode.set_value(new_value, ctx));
                 });
                 ctx.notify();
             }

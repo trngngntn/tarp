@@ -20,11 +20,12 @@ pub struct AttachTarget {
     pub session: Option<String>,
 }
 
-/// `owner_window` is the Workspace window that asked for the attach.
+/// A change to the app's attached tmux sessions.
 #[derive(Clone)]
 pub enum TmuxControlEvent {
     Attached {
         key: TmuxSessionKey,
+        /// The Workspace window that asked for the attach.
         owner_window: WindowId,
         session_name: String,
         connection: Connection,
@@ -32,6 +33,7 @@ pub enum TmuxControlEvent {
     },
     WindowAdded {
         key: TmuxSessionKey,
+        /// The Workspace window that shows the session.
         owner_window: WindowId,
         connection: Connection,
         window: WindowInfo,
@@ -54,6 +56,7 @@ pub enum TmuxControlEvent {
         reason: Option<String>,
     },
     AttachFailed {
+        /// The Workspace window that asked for the attach.
         owner_window: WindowId,
         message: String,
     },

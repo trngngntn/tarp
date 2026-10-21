@@ -2430,6 +2430,13 @@ fn raw_mode_ignores_shell_integration_hooks() {
         completion_metadata: CompletionMetadata::default(),
         prompt_metadata: PromptMetadata::default(),
     });
-    model.preexec(PreexecValue::default());
     assert_eq!(model.block_list().active_block().id(), &before);
+    model.preexec(PreexecValue {
+        command: "ls".to_owned(),
+        ..Default::default()
+    });
+    let block = model.block_list().active_block();
+    assert_eq!(block.id(), &before);
+    assert_eq!(block.command_to_string(), "");
+    assert_eq!(block.state(), BlockState::Executing);
 }

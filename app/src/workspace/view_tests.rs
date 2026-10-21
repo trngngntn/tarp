@@ -166,6 +166,7 @@ pub(crate) fn initialize_app_with_team_client(app: &mut App, team_client: Arc<dy
     app.add_singleton_model(crate::ai::blocklist::QueuedQueryModel::new);
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    #[cfg(not(target_family = "wasm"))]
     app.add_singleton_model(|_| TmuxControlSessions::new());
     // The blocklist controller created during terminal bootstrap subscribes to
     // OrchestrationEventService and OrchestrationEventStreamer unconditionally,
@@ -6393,8 +6394,6 @@ mod tmux_control_tabs {
         });
     }
 
-    /// A user-closed tab leaves a stale entry behind; detaching must close only the session's
-    /// remaining tabs, never whatever now sits at the closed tab's index.
     #[test]
     fn test_tmux_window_added_in_the_background_keeps_focus() {
         let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
@@ -6424,6 +6423,8 @@ mod tmux_control_tabs {
         });
     }
 
+    /// A user-closed tab leaves a stale entry behind; detaching must close only the session's
+    /// remaining tabs, never whatever now sits at the closed tab's index.
     #[test]
     fn test_tmux_detach_after_a_user_close_keeps_other_tabs() {
         let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
@@ -6689,6 +6690,38 @@ mod tmux_control_tabs {
                 assert!(workspace.get_tab_transfer_info_for_attach(1, ctx).is_none());
             });
             app.read(|ctx| assert!(!CrossWindowTabDrag::as_ref(ctx).is_active()));
+        });
+    }
+
+    #[test]
+    fn snapshot_maps_the_active_tab_past_skipped_tmux_tabs() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (_tmux, connection, _events) = fake_tmux();
+            workspace.update(&mut app, |workspace, ctx| {
+                let window_id = workspace.window_id;
+                let event = attached(ZSH_AND_CLAUDE, &connection, window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+                let tmux_tabs = [1, 2].map(|index| workspace.tabs[index].pane_group.id());
+                workspace.add_terminal_tab(false, ctx);
+                let new_tab = (1..workspace.tabs.len())
+                    .find(|index| !tmux_tabs.contains(&workspace.tabs[*index].pane_group.id()))
+                    .unwrap();
+                workspace.activate_tab(new_tab, ctx);
+                let snapshot = workspace.snapshot(window_id, false, ctx);
+                assert_eq!(snapshot.tabs.len(), 2);
+                assert_eq!(snapshot.active_tab_index, 1);
+
+                let tmux_tab = (1..workspace.tabs.len())
+                    .find(|index| tmux_tabs.contains(&workspace.tabs[*index].pane_group.id()))
+                    .unwrap();
+                workspace.activate_tab(tmux_tab, ctx);
+                let snapshot = workspace.snapshot(window_id, false, ctx);
+                assert!(snapshot.active_tab_index < snapshot.tabs.len());
+            });
         });
     }
 
