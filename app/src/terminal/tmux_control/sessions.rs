@@ -126,6 +126,16 @@ impl TmuxControlSessions {
         window: TmuxWindowId,
         ctx: &mut ModelContext<Self>,
     ) {
+        self.remove_window(key, window, ctx);
+    }
+
+    /// Detaches once the last open window is gone.
+    fn remove_window(
+        &mut self,
+        key: TmuxSessionKey,
+        window: TmuxWindowId,
+        ctx: &mut ModelContext<Self>,
+    ) {
         let Some(session) = self.sessions.get_mut(&key) else {
             return;
         };
@@ -192,8 +202,8 @@ impl TmuxControlSessions {
         }
     }
 
-    /// Leaves `connection` and shows the session's windows again through the connection that
-    /// already owns it.
+    /// Leaves `connection` and, for the window that owns the session, shows its windows again
+    /// through the connection that already owns it. Another window is refused.
     fn supersede(
         &mut self,
         id: u64,
@@ -210,9 +220,16 @@ impl TmuxControlSessions {
         let Some(session) = self.sessions.get(&key) else {
             return;
         };
+        if session.owner_window != owner_window {
+            ctx.emit(TmuxControlEvent::AttachFailed {
+                owner_window,
+                message: "already open in another Tarp window".to_owned(),
+            });
+            return;
+        }
         let windows = list_windows(&session.connection);
         ctx.spawn(windows, move |me, windows, ctx| {
-            me.finish_relist(key, owner_window, windows, ctx)
+            me.finish_relist(key, windows, ctx)
         });
     }
 
@@ -269,16 +286,15 @@ impl TmuxControlSessions {
     fn finish_relist(
         &mut self,
         key: TmuxSessionKey,
-        owner_window: WindowId,
         windows: Result<Vec<WindowInfo>, String>,
         ctx: &mut ModelContext<Self>,
     ) {
         let Some(session) = self.sessions.get_mut(&key) else {
             return;
         };
+        let owner_window = session.owner_window;
         match windows {
             Ok(windows) => {
-                session.owner_window = owner_window;
                 session.open_windows = open_windows(&windows);
                 ctx.emit(TmuxControlEvent::Attached {
                     key,
@@ -320,8 +336,8 @@ impl TmuxControlSessions {
                 });
             }
             Notification::WindowClose(window) => {
-                session.open_windows.remove(&window);
                 ctx.emit(TmuxControlEvent::WindowClosed { key, window });
+                self.remove_window(key, window, ctx);
             }
             Notification::WindowRenamed { window, name } => {
                 ctx.emit(TmuxControlEvent::WindowRenamed { key, window, name });

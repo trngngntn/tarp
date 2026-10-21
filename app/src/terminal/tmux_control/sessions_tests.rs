@@ -218,3 +218,61 @@ fn attaching_an_attached_session_relists_on_the_existing_connection() {
         assert!(fixture.events.is_empty());
     });
 }
+
+#[test]
+fn tmux_closing_the_last_open_window_detaches() {
+    App::test((), |mut app| async move {
+        let fixture = Fixture::new(&mut app);
+        let (mut tmux, _connection) = fixture.attached(&mut app).await;
+        fixture.sessions.update(&mut app, |s, ctx| {
+            s.release_window(KEY, TmuxWindowId(0), ctx)
+        });
+        tmux.send("%window-close @1");
+        assert!(matches!(
+            fixture.next_event().await,
+            TmuxControlEvent::WindowClosed {
+                window: TmuxWindowId(1),
+                ..
+            }
+        ));
+        assert_eq!(read_command(&mut tmux).await, "detach-client");
+        assert!(matches!(
+            fixture.next_event().await,
+            TmuxControlEvent::Detached {
+                key: KEY,
+                reason: None
+            }
+        ));
+    });
+}
+
+#[test]
+fn attaching_from_another_window_is_refused() {
+    App::test((), |mut app| async move {
+        let mut fixture = Fixture::new(&mut app);
+        let (mut first, _first_connection) = fixture.attached(&mut app).await;
+        let first_owner = fixture.owner;
+        let other = WindowId::new();
+        fixture.owner = other;
+        let (mut second, _second_connection) = fixture.connect(&mut app);
+        second.handshake("demo", "3.8");
+        assert_eq!(read_command(&mut second).await, "detach-client");
+        assert!(matches!(
+            fixture.next_event().await,
+            TmuxControlEvent::AttachFailed { owner_window, message }
+                if owner_window == other && message == "already open in another Tarp window"
+        ));
+        assert_eq!(first.try_read_command(W), None);
+        // The first window still owns the session.
+        first.send("%window-add @2");
+        assert_eq!(
+            read_command(&mut first).await,
+            commands::describe_window(TmuxWindowId(2))
+        );
+        first.reply(&["@2 %2 build"]);
+        assert!(matches!(
+            fixture.next_event().await,
+            TmuxControlEvent::WindowAdded { owner_window, .. } if owner_window == first_owner
+        ));
+    });
+}
