@@ -14161,6 +14161,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tmux_control"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "log",
+ "parking_lot",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "to_method"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
