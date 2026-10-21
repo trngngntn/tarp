@@ -1411,7 +1411,7 @@ impl Workspace {
     }
 
     /// Puts a tab into the group with this name, creating the group if there is none yet.
-    fn put_tab_in_named_group(&mut self, tab_index: usize, name: &str) {
+    pub(super) fn put_tab_in_named_group(&mut self, tab_index: usize, name: &str) {
         let group_id = self
             .tab_groups
             .values()
@@ -1669,7 +1669,7 @@ const TMUX_RENAME_SETTLE: std::time::Duration = std::time::Duration::from_secs(5
 const TMUX_RENAME_WARN: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[cfg(not(target_family = "wasm"))]
-mod tmux_agents {
+pub(in crate::workspace::view) mod tmux_agents {
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
     use std::process::Command;

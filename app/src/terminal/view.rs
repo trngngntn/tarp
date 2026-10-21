@@ -17028,7 +17028,7 @@ impl TerminalView {
         Appearance::as_ref(ctx)
     }
 
-    fn refresh_size(&mut self, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn refresh_size(&mut self, ctx: &mut ViewContext<Self>) {
         self.resize_internal(
             SizeUpdateBuilder::for_refresh(*self.size_info).build(self, ctx),
             ctx,

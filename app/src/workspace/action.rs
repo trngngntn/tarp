@@ -408,6 +408,8 @@ pub enum WorkspaceAction {
     ToggleVerticalTabsShowDiffStats,
     ToggleVerticalTabsShowDetailsOnHover,
     ToggleTmuxControlMode,
+    /// Opens the windows of a tmux session as tabs, through tmux control mode.
+    AttachTmuxSession,
     /// Closes the focused panel. This happens as an explicit action from the user.
     ClosePanel,
     CopyTextToClipboard(String),
@@ -1119,6 +1121,7 @@ impl WorkspaceAction {
             | ToggleVerticalTabsShowDiffStats
             | ToggleVerticalTabsShowDetailsOnHover
             | ToggleTmuxControlMode
+            | AttachTmuxSession
             | ToggleWelcomeTips
             | CopyTextToClipboard(_)
             | CopyCurrentPath

@@ -1086,6 +1086,14 @@ pub fn init(app: &mut AppContext) {
                 & id!("Workspace_ActiveTabGroupPinned")
                 & !id!("Workspace_PaneDragging"),
         ),
+        EditableBinding::new(
+            "workspace:attach_tmux_session",
+            "Attach tmux session",
+            WorkspaceAction::AttachTmuxSession,
+        )
+        .with_enabled(|| FeatureFlag::TmuxControlMode.is_enabled())
+        .with_group(bindings::BindingGroup::Navigation.as_str())
+        .with_context_predicate(id!("Workspace") & id!(flags::TMUX_CONTROL_MODE_CONTEXT_FLAG)),
     ]);
 
     settings_view::ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(

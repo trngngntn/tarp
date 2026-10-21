@@ -6207,3 +6207,339 @@ fn test_toggle_tmux_control_mode_flips_the_setting_and_context_flag() {
         });
     });
 }
+
+#[cfg(not(target_family = "wasm"))]
+mod tmux_control_tabs {
+    use std::time::Duration;
+
+    use tmux_control::commands::{self, WindowInfo};
+    use tmux_control::connection::{Connection, ConnectionConfig, ConnectionEvent};
+    use tmux_control::testing::FakeTmux;
+    use tmux_control::{PaneId, SessionId, WindowId as TmuxWindowId};
+
+    use super::*;
+    use crate::terminal::tmux_control::{TmuxControlEvent, TmuxSessionKey};
+
+    const KEY: TmuxSessionKey = TmuxSessionKey {
+        session: SessionId(0),
+    };
+
+    const ZSH_AND_CLAUDE: &[(u32, u32, &str)] = &[(0, 0, "zsh"), (1, 1, "claude")];
+
+    fn info(window: u32, pane: u32, name: &str) -> WindowInfo {
+        WindowInfo {
+            window: TmuxWindowId(window),
+            pane: PaneId(pane),
+            name: name.to_owned(),
+        }
+    }
+
+    fn attached(
+        windows: &[(u32, u32, &str)],
+        connection: &Connection,
+        owner_window: WindowId,
+    ) -> TmuxControlEvent {
+        TmuxControlEvent::Attached {
+            key: KEY,
+            owner_window,
+            session_name: "demo".to_owned(),
+            connection: connection.clone(),
+            windows: windows
+                .iter()
+                .map(|(window, pane, name)| info(*window, *pane, name))
+                .collect(),
+        }
+    }
+
+    fn tab_titles(workspace: &Workspace, ctx: &AppContext) -> Vec<String> {
+        workspace
+            .tabs
+            .iter()
+            .map(|tab| tab.pane_group.as_ref(ctx).display_title(ctx))
+            .collect()
+    }
+
+    fn tab_group_name(workspace: &Workspace, tab_index: usize) -> Option<String> {
+        workspace.tabs[tab_index]
+            .group_id
+            .and_then(|group_id| workspace.tab_groups.get(&group_id))
+            .and_then(|group| group.name.clone())
+    }
+
+    fn toast_messages(workspace: &Workspace, ctx: &AppContext) -> Vec<String> {
+        workspace.toast_stack.as_ref(ctx).toast_texts()
+    }
+
+    /// A connection to an in-process tmux; the receiver keeps the connection's reader running.
+    fn fake_tmux() -> (
+        FakeTmux,
+        Connection,
+        async_channel::Receiver<ConnectionEvent>,
+    ) {
+        FakeTmux::start(ConnectionConfig::default())
+    }
+
+    /// Every command written within half a second, read without blocking the app's executor.
+    async fn written_commands(tmux: &mut FakeTmux) -> Vec<String> {
+        let mut lines = Vec::new();
+        for _ in 0..100 {
+            while let Some(line) = tmux.try_read_command(Duration::from_millis(1)) {
+                lines.push(line);
+            }
+            warpui::r#async::Timer::after(Duration::from_millis(5)).await;
+        }
+        lines
+    }
+
+    #[test]
+    fn test_tmux_attached_session_opens_window_tabs_in_one_group() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (_tmux, connection, _events) = fake_tmux();
+            workspace.update(&mut app, |workspace, ctx| {
+                let event = attached(ZSH_AND_CLAUDE, &connection, workspace.window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+                assert_eq!(workspace.tabs.len(), 3);
+                assert_eq!(tab_titles(workspace, ctx)[1..], ["zsh", "claude"]);
+                assert_eq!(tab_group_name(workspace, 1), Some("demo".into()));
+                assert_eq!(tab_group_name(workspace, 2), Some("demo".into()));
+                assert_eq!(workspace.active_tab_index, 1);
+            });
+        });
+    }
+
+    #[test]
+    fn test_tmux_window_events_follow_tmux() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (_tmux, connection, _events) = fake_tmux();
+            workspace.update(&mut app, |workspace, ctx| {
+                let window_id = workspace.window_id;
+                let event = attached(ZSH_AND_CLAUDE, &connection, window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+
+                workspace.handle_tmux_control_event(
+                    &TmuxControlEvent::WindowAdded {
+                        key: KEY,
+                        owner_window: window_id,
+                        connection: connection.clone(),
+                        window: info(2, 2, "build"),
+                    },
+                    ctx,
+                );
+                assert_eq!(workspace.tabs.len(), 4);
+                assert_eq!(tab_group_name(workspace, 3), Some("demo".into()));
+                assert_eq!(workspace.active_tab_index, 1);
+
+                workspace.handle_tmux_control_event(
+                    &TmuxControlEvent::WindowRenamed {
+                        key: KEY,
+                        window: TmuxWindowId(1),
+                        name: "review".into(),
+                    },
+                    ctx,
+                );
+                assert_eq!(tab_titles(workspace, ctx)[2], "review");
+
+                workspace.handle_tmux_control_event(
+                    &TmuxControlEvent::SessionRenamed {
+                        key: KEY,
+                        name: "work".into(),
+                    },
+                    ctx,
+                );
+                assert_eq!(tab_group_name(workspace, 1), Some("work".into()));
+
+                workspace.handle_tmux_control_event(
+                    &TmuxControlEvent::WindowClosed {
+                        key: KEY,
+                        window: TmuxWindowId(0),
+                    },
+                    ctx,
+                );
+                assert_eq!(workspace.tabs.len(), 3);
+                // The original tab's shell may itself be titled "zsh".
+                assert!(!tab_titles(workspace, ctx)[1..].contains(&"zsh".to_string()));
+
+                workspace.handle_tmux_control_event(
+                    &TmuxControlEvent::Detached {
+                        key: KEY,
+                        reason: None,
+                    },
+                    ctx,
+                );
+                assert_eq!(workspace.tabs.len(), 1);
+            });
+        });
+    }
+
+    /// A user-closed tab leaves a stale entry behind; detaching must close only the session's
+    /// remaining tabs, never whatever now sits at the closed tab's index.
+    #[test]
+    fn test_tmux_window_added_in_the_background_keeps_focus() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (_tmux, connection, _events) = fake_tmux();
+            let window_id = workspace.read(&app, |workspace, _| workspace.window_id);
+            workspace.update(&mut app, |workspace, ctx| {
+                let event = attached(&[(0, 0, "zsh")], &connection, window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+            });
+            let focused = app.focused_view_id(window_id);
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.handle_tmux_control_event(
+                    &TmuxControlEvent::WindowAdded {
+                        key: KEY,
+                        owner_window: window_id,
+                        connection: connection.clone(),
+                        window: info(1, 1, "build"),
+                    },
+                    ctx,
+                );
+            });
+            assert_eq!(app.focused_view_id(window_id), focused);
+        });
+    }
+
+    #[test]
+    fn test_tmux_detach_after_a_user_close_keeps_other_tabs() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (_tmux, connection, _events) = fake_tmux();
+            workspace.update(&mut app, |workspace, ctx| {
+                let first_tab = workspace.tabs[0].pane_group.id();
+                let event = attached(ZSH_AND_CLAUDE, &connection, workspace.window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+                workspace.close_tab(1, true, false, ctx);
+                workspace.handle_tmux_control_event(
+                    &TmuxControlEvent::Detached {
+                        key: KEY,
+                        reason: None,
+                    },
+                    ctx,
+                );
+                assert_eq!(workspace.tabs.len(), 1);
+                assert_eq!(workspace.tabs[0].pane_group.id(), first_tab);
+            });
+        });
+    }
+
+    #[test]
+    fn reattach_reopens_closed_windows_without_duplicates() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (_tmux, connection, _events) = fake_tmux();
+            workspace.update(&mut app, |workspace, ctx| {
+                let event = attached(ZSH_AND_CLAUDE, &connection, workspace.window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+                workspace.close_tab(2, true, false, ctx);
+                workspace.handle_tmux_control_event(&event, ctx);
+                assert_eq!(workspace.tabs.len(), 3);
+                let titles = tab_titles(workspace, ctx)[1..].to_vec();
+                assert_eq!(titles.iter().filter(|title| *title == "zsh").count(), 1);
+                assert_eq!(titles.iter().filter(|title| *title == "claude").count(), 1);
+            });
+        });
+    }
+
+    #[test]
+    fn snapshot_excludes_tmux_window_tabs() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (_tmux, connection, _events) = fake_tmux();
+            workspace.update(&mut app, |workspace, ctx| {
+                let window_id = workspace.window_id;
+                let event = attached(ZSH_AND_CLAUDE, &connection, window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+                assert_eq!(workspace.snapshot(window_id, false, ctx).tabs.len(), 1);
+            });
+        });
+    }
+
+    #[test]
+    fn attach_failure_shows_toast_and_opens_no_tab() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            workspace.update(&mut app, |workspace, ctx| {
+                let message = "tmux refused to attach: no sessions".to_string();
+                workspace.handle_tmux_control_event(
+                    &TmuxControlEvent::AttachFailed {
+                        owner_window: workspace.window_id,
+                        message: message.clone(),
+                    },
+                    ctx,
+                );
+                assert_eq!(workspace.tabs.len(), 1);
+                assert_eq!(toast_messages(workspace, ctx), vec![message.clone()]);
+                workspace.handle_tmux_control_event(
+                    &TmuxControlEvent::AttachFailed {
+                        owner_window: WindowId::new(),
+                        message,
+                    },
+                    ctx,
+                );
+                assert_eq!(toast_messages(workspace, ctx).len(), 1);
+            });
+        });
+    }
+
+    #[test]
+    fn attach_action_is_inert_when_control_mode_is_off() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.handle_action(&WorkspaceAction::AttachTmuxSession, ctx);
+                assert_eq!(workspace.tabs.len(), 1);
+                assert!(toast_messages(workspace, ctx).is_empty());
+            });
+        });
+    }
+
+    /// A background tab learns its size only when shown, and tmux only redraws a pane on request.
+    #[test]
+    fn test_tmux_activating_a_background_tab_restores_it() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (mut tmux, connection, _events) = fake_tmux();
+            tmux.handshake("demo", "3.8");
+            workspace.update(&mut app, |workspace, ctx| {
+                let event = attached(ZSH_AND_CLAUDE, &connection, workspace.window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+            });
+            let before = written_commands(&mut tmux).await;
+            assert!(before.contains(&commands::restore_pane(PaneId(0))));
+            assert!(!before.contains(&commands::restore_pane(PaneId(1))));
+
+            workspace.update(&mut app, |workspace, ctx| workspace.activate_tab(2, ctx));
+            let after = written_commands(&mut tmux).await;
+            assert!(after.contains(&commands::restore_pane(PaneId(1))));
+        });
+    }
+}

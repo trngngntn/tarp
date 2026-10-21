@@ -21,6 +21,8 @@ mod tab_grouping;
 #[cfg(test)]
 #[path = "view_tests.rs"]
 pub(crate) mod tests;
+#[cfg(not(target_family = "wasm"))]
+mod tmux_control_tabs;
 mod vertical_tabs;
 #[cfg(target_family = "wasm")]
 mod wasm_view;
@@ -69,6 +71,8 @@ use repo_metadata::repositories::DetectedRepositories;
 use sentry::protocol::{Attachment, AttachmentType};
 use serde_json;
 use session_sharing_protocol::common::SessionId as SharedSessionId;
+#[cfg(not(target_family = "wasm"))]
+use tmux_control::WindowId as TmuxWindowId;
 #[cfg(target_family = "wasm")]
 use url::Url;
 use warp_cli::agent::Harness;
@@ -423,6 +427,8 @@ use crate::terminal::settings::{SpacingMode, TerminalSettings};
 use crate::terminal::shared_session::SharedSessionSource;
 use crate::terminal::shared_session::{IsSharedSessionCreator, SharedSessionActionSource};
 use crate::terminal::shell::ShellType;
+#[cfg(not(target_family = "wasm"))]
+use crate::terminal::tmux_control::{TmuxControlSessions, TmuxSessionKey};
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::terminal::view::ambient_agent::AmbientAgentViewModel as HandoffAmbientAgentViewModel;
 use crate::terminal::view::ambient_agent::{AuthSecretFtuxView, AuthSecretFtuxViewEvent};
@@ -1234,6 +1240,13 @@ pub struct Workspace {
     tmux_rename_settle: HashMap<EntityId, tab_grouping::TmuxRenameSettle>,
     /// The sidebar order as last agreed with tmux (`tab_grouping::tmux_layout`).
     tmux_layout: tab_grouping::TmuxLayoutState,
+    /// The tab (pane group) showing each tmux window attached in control mode. An entry may
+    /// outlive its tab, e.g. one the user closed.
+    #[cfg(not(target_family = "wasm"))]
+    tmux_window_tabs: HashMap<(TmuxSessionKey, TmuxWindowId), EntityId>,
+    /// tmux tabs created in the background and not shown since.
+    #[cfg(not(target_family = "wasm"))]
+    unshown_tmux_tabs: HashSet<EntityId>,
     left_panel_view: ViewHandle<LeftPanelView>,
     left_panel_views: Vec<ToolPanelView>,
     right_panel_view: ViewHandle<RightPanelView>,
@@ -3340,6 +3353,10 @@ impl Workspace {
         ctx.subscribe_to_model(&CLIAgentSessionsModel::handle(ctx), |me, _, event, ctx| {
             me.handle_cli_agent_sessions_event(event, ctx);
         });
+        #[cfg(not(target_family = "wasm"))]
+        ctx.subscribe_to_model(&TmuxControlSessions::handle(ctx), |me, _, event, ctx| {
+            me.handle_tmux_control_event(event, ctx);
+        });
 
         ctx.subscribe_to_model(
             &AgentNotificationsModel::handle(ctx),
@@ -3677,6 +3694,10 @@ impl Workspace {
             is_group_being_dragged: false,
             tmux_rename_settle: HashMap::new(),
             tmux_layout: Default::default(),
+            #[cfg(not(target_family = "wasm"))]
+            tmux_window_tabs: HashMap::new(),
+            #[cfg(not(target_family = "wasm"))]
+            unshown_tmux_tabs: HashSet::new(),
             left_panel_view,
             left_panel_views,
             right_panel_view,
@@ -5782,6 +5803,8 @@ impl Workspace {
             let pane_group_id = tab.pane_group.id();
             self.tab_mru_order.retain(|id| *id != pane_group_id);
             self.tab_mru_order.insert(0, pane_group_id);
+            #[cfg(not(target_family = "wasm"))]
+            self.restore_tmux_tab_on_first_show(pane_group_id, ctx);
         }
         if self.vertical_tabs_panel_open
             && FeatureFlag::VerticalTabs.is_enabled()
@@ -12151,6 +12174,11 @@ impl Workspace {
         });
     }
 
+    #[cfg(target_family = "wasm")]
+    fn is_tmux_window_tab(&self, _pane_group_id: EntityId) -> bool {
+        false
+    }
+
     pub fn snapshot(
         &self,
         window_id: WindowId,
@@ -12193,6 +12221,7 @@ impl Workspace {
             .tab_views()
             .enumerate()
             .filter(|(tab_index, _)| Some(*tab_index) != transferred_tab_index)
+            .filter(|(_, pane_group_view)| !self.is_tmux_window_tab(pane_group_view.id()))
             .map(|(tab_index, pane_group_view)| {
                 let resizable_data = ResizableData::handle(app);
                 let modal_sizes = resizable_data.as_ref(app).get_all_handles(window_id);
@@ -25897,6 +25926,10 @@ impl Workspace {
                     let _ = settings.tmux_control_mode.set_value(new_value, ctx);
                 });
                 ctx.notify();
+            }
+            AttachTmuxSession => {
+                #[cfg(not(target_family = "wasm"))]
+                self.attach_tmux_session(ctx);
             }
             ToggleAgentManagementView => {
                 if AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
