@@ -9,6 +9,7 @@ use crate::connection::{
 };
 use crate::ids::{PaneId, WindowId};
 use crate::parser::Notification;
+use crate::restore::RESET;
 use crate::testing::recv_timeout;
 use crate::{commands, tmux_binary};
 
@@ -103,8 +104,8 @@ fn l_numbers(text: &[u8]) -> Vec<u32> {
             0x1b => {
                 if bytes.next_if_eq(&b'[').is_some() {
                     while bytes.next_if(|b| !b.is_ascii_alphabetic()).is_some() {}
-                    bytes.next();
                 }
+                bytes.next();
             }
             b'\r' => {}
             byte => plain.push(byte as char),
@@ -164,7 +165,7 @@ fn restore_reproduces_screen_and_cursor() {
     assert_eq!(
         recv_timeout(&rx, SECS),
         Some(PaneEvent::Restored(
-            b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H".to_vec()
+            [RESET, b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"].concat()
         ))
     );
 }

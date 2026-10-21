@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::commands;
+use crate::restore::RESET;
 use crate::testing::{FakeTmux, recv_timeout};
 
 const W: Duration = Duration::from_millis(200);
@@ -141,7 +142,7 @@ fn restore_is_one_line_and_delivers_restored_before_later_output() {
     assert_eq!(
         recv_timeout(&rx, W),
         Some(PaneEvent::Restored(
-            b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H".to_vec()
+            [RESET, b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"].concat()
         ))
     );
     assert_eq!(
@@ -292,7 +293,7 @@ fn restore_while_restoring_is_ignored() {
     assert_eq!(
         recv_timeout(&rx, W),
         Some(PaneEvent::Restored(
-            b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H".to_vec()
+            [RESET, b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"].concat()
         ))
     );
     assert_eq!(recv_timeout(&rx, W), None);

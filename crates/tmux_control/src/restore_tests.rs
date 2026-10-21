@@ -2,6 +2,14 @@ use super::*;
 
 const NORMAL_STATE: &[u8] = b"2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2";
 
+/// Every restore starts from the normal screen with default modes, whatever the terminal showed.
+const RESET: &[u8] = b"\x1b[?1049l\x1b[0m\x1b[r\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\
+    \x1b[?1006l\x1b[?2004l\x1b[?1l\x1b>\x1b[H\x1b[2J\x1b[3J";
+
+fn after_reset(rest: &[u8]) -> Vec<u8> {
+    [RESET, rest].concat()
+}
+
 #[test]
 fn state_format_and_parse() {
     assert_eq!(
@@ -41,7 +49,7 @@ fn normal_screen_restore() {
     };
     assert_eq!(
         restore_bytes(&capture),
-        b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"
+        after_reset(b"ab\r\ncd\r\n\x1b[2;3H")
     );
 }
 
@@ -55,7 +63,7 @@ fn alternate_screen_restore() {
     };
     assert_eq!(
         restore_bytes(&capture),
-        b"\x1b[H\x1b[2J\x1b[3Jn1\r\nn2\r\nn3\r\nn4\x1b[3;3H\x1b[?1049h\x1b[HALT\r\n\r\n\x1b[1;4H"
+        after_reset(b"n1\r\nn2\r\nn3\r\nn4\x1b[3;3H\x1b[?1049h\x1b[HALT\r\n\r\n\x1b[1;4H")
     );
 }
 
@@ -69,6 +77,6 @@ fn modes_and_scroll_region_are_restored() {
     };
     assert_eq!(
         restore_bytes(&capture),
-        b"\x1b[H\x1b[2J\x1b[3J\r\n\r\n\x1b[?2004h\x1b[?1003h\x1b[?1006h\x1b[?25l\x1b[2;3r\x1b[1;1H"
+        after_reset(b"\r\n\r\n\x1b[?2004h\x1b[?1003h\x1b[?1006h\x1b[?25l\x1b[2;3r\x1b[1;1H")
     );
 }

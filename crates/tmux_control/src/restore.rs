@@ -99,10 +99,17 @@ fn push_lines(out: &mut Vec<u8>, lines: &[&Vec<u8>]) {
     }
 }
 
-/// Builds the bytes that, fed to a fresh terminal, reproduce the captured pane.
+/// Returns the terminal to the normal screen with default attributes, scroll region, cursor and
+/// input modes, so a restore over an earlier one (e.g. left on the alternate screen) starts clean.
+pub(crate) const RESET: &[u8] =
+    b"\x1b[?1049l\x1b[0m\x1b[r\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\
+    \x1b[?1006l\x1b[?2004l\x1b[?1l\x1b>";
+
+/// Builds the bytes that reproduce the captured pane, whatever the terminal showed before.
 pub fn restore_bytes(capture: &PaneCapture) -> Vec<u8> {
     let state = &capture.state;
-    let mut out = b"\x1b[H\x1b[2J\x1b[3J".to_vec();
+    let mut out = RESET.to_vec();
+    out.extend_from_slice(b"\x1b[H\x1b[2J\x1b[3J");
 
     let history = if state.history_size > 0 {
         &capture.history[..]

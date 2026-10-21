@@ -4,6 +4,7 @@ use std::time::Duration;
 use futures::executor::block_on;
 use parking_lot::FairMutex;
 use tmux_control::connection::{Connection, ConnectionConfig, PaneEvent};
+use tmux_control::restore::{PaneCapture, PaneState, restore_bytes};
 use tmux_control::testing::FakeTmux;
 use tmux_control::{PaneId, SessionId, WindowId as TmuxWindowId, commands};
 
@@ -88,6 +89,27 @@ fn a_restore_discards_a_wrapper_cut_off_by_a_pause() {
         model.lock().block_list().active_block().output_to_string(),
         "ab"
     );
+}
+
+#[test]
+fn a_restore_over_the_alternate_screen_shows_the_normal_screen() {
+    let (_tmux, model, listener, binding, _pane_rx) = fixture(true);
+    let capture = PaneCapture {
+        state: PaneState::parse(b"2 0 0 0 0 0 1 0 0 0 0 0 0 0 1 0 0").unwrap(),
+        history: vec![],
+        visible: vec![b"ab".to_vec()],
+        saved_normal: vec![],
+    };
+    let (tx, rx) = async_channel::bounded(8);
+    tx.try_send(PaneEvent::Output(b"\x1b[?1049hXYZ".to_vec()))
+        .unwrap();
+    tx.try_send(PaneEvent::Restored(restore_bytes(&capture)))
+        .unwrap();
+    tx.close();
+    block_on(run_output(model.clone(), listener, binding, rx));
+    let model = model.lock();
+    assert!(!model.is_alt_screen_active());
+    assert_eq!(model.block_list().active_block().output_to_string(), "ab");
 }
 
 #[test]
