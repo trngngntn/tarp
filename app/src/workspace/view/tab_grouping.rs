@@ -1674,6 +1674,8 @@ mod tmux_agents {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
+    use tmux_control::tmux_binary;
+
     const AGENT_PROCESS_NAMES: [&str; 2] = ["claude", "codex"];
 
     /// How far below a pane's own process an agent may sit (e.g. pane shell, then agent).
@@ -1990,14 +1992,6 @@ mod tmux_agents {
             }
             Err(err) => log::warn!("could not run {:?}: {err}", command.get_program()),
         }
-    }
-
-    // The app does not inherit a login shell's PATH, so look in the usual install locations.
-    fn tmux_binary() -> &'static str {
-        ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"]
-            .into_iter()
-            .find(|path| Path::new(path).exists())
-            .unwrap_or("tmux")
     }
 
     fn run(program: &str, args: &[&str]) -> Option<String> {

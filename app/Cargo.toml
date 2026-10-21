@@ -302,6 +302,7 @@ winit = { workspace = true }
 wgpu.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+tmux_control.workspace = true
 app-installation-detection.workspace = true
 async-io.workspace = true
 axum.workspace = true
@@ -445,6 +446,7 @@ warp_files = { workspace = true, features = ["test-util"] }
 repo_metadata = { workspace = true, features = ["test-util"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+tmux_control = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "time", "test-util"] }
 
 [build-dependencies]

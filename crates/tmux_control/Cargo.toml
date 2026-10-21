@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 async-channel.workspace = true
+command.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 thiserror.workspace = true

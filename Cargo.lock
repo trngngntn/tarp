@@ -14165,6 +14165,7 @@ name = "tmux_control"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "command",
  "log",
  "parking_lot",
  "thiserror 2.0.17",
@@ -15479,6 +15480,7 @@ dependencies = [
  "thiserror 2.0.17",
  "thousands",
  "tikv-jemallocator",
+ "tmux_control",
  "tokio",
  "tokio-util",
  "toml 0.8.23",

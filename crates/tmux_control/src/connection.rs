@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::process::Stdio;
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use async_channel::TrySendError;
+use command::blocking::Command;
 use parking_lot::Mutex;
 
 use crate::commands;
@@ -29,6 +31,16 @@ impl Default for ConnectionConfig {
             pane_channel_capacity: 256,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct SpawnConfig {
+    pub binary: String,
+    /// The `-L` socket name; `None` uses tmux's default server.
+    pub socket_name: Option<String>,
+    /// The session to attach to; `None` lets tmux pick.
+    pub target: Option<String>,
+    pub connection: ConnectionConfig,
 }
 
 #[derive(Debug)]
@@ -275,6 +287,42 @@ impl Connection {
         config: ConnectionConfig,
     ) -> (Connection, async_channel::Receiver<ConnectionEvent>) {
         Self::start(reader, writer, None, config)
+    }
+
+    /// Runs `tmux -C attach` over pipes. The returned events end with `Closed` when tmux exits.
+    pub fn spawn(
+        config: SpawnConfig,
+    ) -> Result<(Connection, async_channel::Receiver<ConnectionEvent>), ConnectionError> {
+        let mut command = Command::new(&config.binary);
+        if let Some(socket) = &config.socket_name {
+            command.args(["-L", socket]);
+        }
+        command.args(["-C", "attach"]);
+        if let Some(target) = &config.target {
+            command.args(["-t", target]);
+        }
+        let mut child = command
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| ConnectionError::Spawn(err.to_string()))?;
+        let (Some(stdin), Some(stdout), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            return Err(ConnectionError::Spawn("tmux pipes unavailable".into()));
+        };
+        spawn("tmux-reaper", move || {
+            let _ = child.wait();
+        });
+        Ok(Self::start(
+            stdout,
+            stdin,
+            Some(Box::new(stderr)),
+            config.connection,
+        ))
     }
 
     /// `line` must hold a single tmux command: each command in a line gets its own reply.
