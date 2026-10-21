@@ -143,6 +143,7 @@ use crate::terminal::shared_session::share_modal::{ShareSessionModal, ShareSessi
 use crate::terminal::shared_session::{
     self, IsSharedSessionCreator, SharedSessionActionSource, SharedSessionSource,
 };
+use crate::terminal::tmux_control::{TmuxPaneBinding, TmuxTerminalManager};
 use crate::terminal::view::inline_banner::{
     ZeroStatePromptSuggestionTriggeredFrom, ZeroStatePromptSuggestionType,
 };
@@ -3611,6 +3612,49 @@ impl PaneGroup {
         )
     }
 
+    pub fn new_for_tmux_window(
+        binding: TmuxPaneBinding,
+        tips_completed: ModelHandle<TipsCompleted>,
+        user_default_shell_unsupported_banner_model_handle: ModelHandle<BannerState>,
+        server_api: Arc<ServerApi>,
+        model_event_sender: Option<SyncSender<ModelEvent>>,
+        ctx: &mut ViewContext<Self>,
+    ) -> Self {
+        let model_event_sender_clone = model_event_sender.clone();
+        let initial_layout = move |resources,
+                                   pane_contents: &mut HashMap<PaneId, Box<dyn AnyPaneContent>>,
+                                   pane_history: &mut Vec<PaneId>,
+                                   view_bounds: RectF,
+                                   ctx: &mut ViewContext<Self>| {
+            let (view, terminal_manager) = TmuxTerminalManager::create_model(
+                binding,
+                resources,
+                view_bounds.size(),
+                model_event_sender_clone.clone(),
+                ctx.window_id(),
+                ctx,
+            );
+
+            Self::terminal_pane_data(
+                Uuid::new_v4().as_bytes().to_vec(),
+                view,
+                terminal_manager,
+                model_event_sender_clone,
+                pane_contents,
+                pane_history,
+                ctx,
+            )
+        };
+        Self::new_internal(
+            tips_completed,
+            user_default_shell_unsupported_banner_model_handle,
+            server_api,
+            model_event_sender,
+            Box::new(initial_layout),
+            ctx,
+        )
+    }
+
     /// Create a new pane group for a view-only cloud conversation.
     pub fn new_for_conversation_transcript_viewer(
         conversation: AIConversation,
@@ -5257,6 +5301,12 @@ impl PaneGroup {
         if let Some(pane) = self.focused_pane_content(ctx) {
             pane.focus(ctx);
         }
+    }
+
+    /// Sets the tab's title without moving focus.
+    pub fn set_custom_title(&mut self, title: Option<String>, ctx: &mut ViewContext<Self>) {
+        self.custom_title = title.filter(|title| !title.is_empty());
+        ctx.notify();
     }
 
     pub fn clear_title(&mut self, ctx: &mut ViewContext<Self>) {

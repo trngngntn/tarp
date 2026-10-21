@@ -1,5 +1,12 @@
+mod event_loop;
+mod sessions;
+mod terminal_manager;
+
 use settings::Setting;
 use warpui::{AppContext, SingletonEntity};
+
+pub use sessions::{TmuxControlSessions, TmuxSessionKey};
+pub use terminal_manager::{TmuxPaneBinding, TmuxTerminalManager};
 
 use crate::features::FeatureFlag;
 use crate::workspace::tab_settings::TabSettings;
