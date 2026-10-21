@@ -89,6 +89,8 @@ pub struct TmuxControlSessions {
     links: HashMap<u64, Link>,
     sessions: HashMap<TmuxSessionKey, AttachedSession>,
     next_link: u64,
+    /// The tmux socket (`-L`) used when an attach names none; `None` is tmux's default server.
+    default_socket_name: Option<String>,
 }
 
 impl TmuxControlSessions {
@@ -104,7 +106,9 @@ impl TmuxControlSessions {
     ) {
         let config = SpawnConfig {
             binary: tmux_binary().into(),
-            socket_name: target.socket_name,
+            socket_name: target
+                .socket_name
+                .or_else(|| self.default_socket_name.clone()),
             target: target.session,
             connection: ConnectionConfig::default(),
         };
@@ -117,6 +121,12 @@ impl TmuxControlSessions {
                 message: err.to_string(),
             }),
         }
+    }
+
+    /// Keeps tests that attach with no socket away from the user's own tmux server.
+    #[cfg(test)]
+    pub(crate) fn set_default_socket_name(&mut self, socket_name: String) {
+        self.default_socket_name = Some(socket_name);
     }
 
     /// Records that no tab shows `window` anymore, and detaches once no tab shows the session.
@@ -147,7 +157,7 @@ impl TmuxControlSessions {
         }
     }
 
-    fn attach_with_connection(
+    pub(crate) fn attach_with_connection(
         &mut self,
         connection: Connection,
         events: async_channel::Receiver<ConnectionEvent>,

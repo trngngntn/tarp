@@ -12667,9 +12667,15 @@ impl Workspace {
             self.prune_empty_tab_group(group_id, ctx);
         }
 
-        // Re-adopted child tabs leave no useful tab contents to restore; the
-        // live pane already moved back.
-        if add_to_undo_stack && !re_adopted {
+        if detach_panes_for_close && self.is_tmux_window_tab(removed_pane_group_id) {
+            // tmux keeps the window and re-attaching shows it again, so there is nothing to undo.
+            // Released now, the pane can't later cut off a tab that re-attached it.
+            tab_data
+                .pane_group
+                .update(ctx, |pane_group, ctx| pane_group.clean_up_panes(ctx));
+        } else if add_to_undo_stack && !re_adopted {
+            // Re-adopted child tabs leave no useful tab contents to restore; the
+            // live pane already moved back.
             let handle = ctx.handle();
             UndoCloseStack::handle(ctx).update(ctx, |stack, ctx| {
                 log::info!("storing data for closed tab");

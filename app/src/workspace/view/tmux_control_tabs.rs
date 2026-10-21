@@ -2,7 +2,7 @@ use tmux_control::WindowId as TmuxWindowId;
 use tmux_control::commands::WindowInfo;
 use tmux_control::connection::Connection;
 use warp_core::features::FeatureFlag;
-use warpui::{EntityId, SingletonEntity as _, ViewContext};
+use warpui::{EntityId, SingletonEntity as _, ViewContext, WindowId};
 
 use super::Workspace;
 use super::tab_grouping::tmux_agents;
@@ -29,12 +29,13 @@ impl Workspace {
                 .map(|(_, pid)| pid)
                 .collect();
         let owner_window = self.window_id;
+        if shell_pids.is_empty() {
+            Self::request_tmux_attach(None, owner_window, ctx);
+            return;
+        }
         ctx.spawn(
             async move {
                 tokio::task::spawn_blocking(move || {
-                    if shell_pids.is_empty() {
-                        return None;
-                    }
                     let mut sessions = tmux_agents::tmux_client_sessions();
                     shell_pids
                         .iter()
@@ -44,15 +45,23 @@ impl Workspace {
                 .await
             },
             move |_, session, ctx| {
-                let target = AttachTarget {
-                    socket_name: None,
-                    session: session.ok().flatten(),
-                };
-                TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
-                    sessions.attach(target, owner_window, ctx)
-                });
+                Self::request_tmux_attach(session.ok().flatten(), owner_window, ctx)
             },
         );
+    }
+
+    fn request_tmux_attach(
+        session: Option<String>,
+        owner_window: WindowId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let target = AttachTarget {
+            socket_name: None,
+            session,
+        };
+        TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
+            sessions.attach(target, owner_window, ctx)
+        });
     }
 
     pub(super) fn handle_tmux_control_event(

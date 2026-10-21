@@ -6504,19 +6504,85 @@ mod tmux_control_tabs {
         });
     }
 
+    /// The attach runs after the action returns, so the test waits for what it would have shown.
     #[test]
     fn attach_action_is_inert_when_control_mode_is_off() {
         let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
         let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
         App::test((), |mut app| async move {
             initialize_app(&mut app);
+            // Were the gate missing, the attach would fail against this empty private server and
+            // show a toast, rather than reach the user's own tmux.
+            let socket = format!("tarp-test-{}-inert", std::process::id());
+            app.update(|ctx| {
+                TmuxControlSessions::handle(ctx)
+                    .update(ctx, |sessions, _| sessions.set_default_socket_name(socket));
+            });
             let workspace = mock_workspace(&mut app);
             workspace.update(&mut app, |workspace, ctx| {
                 workspace.handle_action(&WorkspaceAction::AttachTmuxSession, ctx);
+            });
+            for _ in 0..200 {
+                warpui::r#async::Timer::after(Duration::from_millis(5)).await;
+            }
+            workspace.read(&app, |workspace, ctx| {
                 assert_eq!(workspace.tabs.len(), 1);
                 assert!(toast_messages(workspace, ctx).is_empty());
             });
         });
+    }
+
+    /// tmux keeps a closed tab's window, so closing releases it at once instead of waiting out
+    /// the undo grace period, after which the old pane would cut off a tab that re-attached it.
+    #[test]
+    fn test_tmux_closing_a_tab_releases_its_window_at_once() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            assert!(app.read(|ctx| *UndoCloseSettings::as_ref(ctx).enabled));
+            let workspace = mock_workspace(&mut app);
+            let window_id = workspace.read(&app, |workspace, _| workspace.window_id);
+            let (mut tmux, connection, events) = fake_tmux();
+            app.update(|ctx| {
+                TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.attach_with_connection(connection, events, window_id, ctx)
+                });
+            });
+            tmux.handshake("demo", "3.8");
+            assert_eq!(read_command(&mut tmux).await, commands::list_windows());
+            tmux.reply(&["@0 %0 zsh"]);
+            for _ in 0..1000 {
+                if workspace.read(&app, |workspace, _| workspace.tabs.len()) == 2 {
+                    break;
+                }
+                warpui::r#async::Timer::after(Duration::from_millis(5)).await;
+            }
+            let tmux_tab = workspace.read(&app, |workspace, _| workspace.tabs[1].pane_group.id());
+
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.close_tab(1, true, true, ctx)
+            });
+            assert!(
+                written_commands(&mut tmux)
+                    .await
+                    .contains(&commands::detach_client())
+            );
+            app.read(|ctx| {
+                assert!(!UndoCloseStack::as_ref(ctx).is_pane_group_tab_in_stack(tmux_tab));
+            });
+        });
+    }
+
+    /// Reads without blocking the app's executor, which must run for the command to be written.
+    async fn read_command(tmux: &mut FakeTmux) -> String {
+        for _ in 0..1000 {
+            if let Some(line) = tmux.try_read_command(Duration::from_millis(1)) {
+                return line;
+            }
+            warpui::r#async::Timer::after(Duration::from_millis(5)).await;
+        }
+        panic!("timed out waiting for a tmux command");
     }
 
     /// A background tab learns its size only when shown, and tmux only redraws a pane on request.
