@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use tmux_control::WindowId as TmuxWindowId;
 use tmux_control::commands::WindowInfo;
 use tmux_control::connection::Connection;
@@ -168,6 +170,23 @@ impl Workspace {
                     toast_stack.add_ephemeral_toast(DismissibleToast::error(message.clone()), ctx);
                 });
             }
+        }
+    }
+
+    /// Releases every tmux window this workspace shows, as its window goes away. Undoing the
+    /// close doesn't bring them back; re-attaching does.
+    pub(super) fn release_tmux_tabs(&mut self, ctx: &mut ViewContext<Self>) {
+        self.unshown_tmux_tabs.clear();
+        let tmux_tabs: HashSet<EntityId> =
+            self.tmux_window_tabs.drain().map(|(_, id)| id).collect();
+        let pane_groups: Vec<_> = self
+            .tabs
+            .iter()
+            .filter(|tab| tmux_tabs.contains(&tab.pane_group.id()))
+            .map(|tab| tab.pane_group.clone())
+            .collect();
+        for pane_group in pane_groups {
+            pane_group.update(ctx, |pane_group, ctx| pane_group.clean_up_panes(ctx));
         }
     }
 

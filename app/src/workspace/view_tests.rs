@@ -6553,22 +6553,7 @@ mod tmux_control_tabs {
             initialize_app(&mut app);
             assert!(app.read(|ctx| *UndoCloseSettings::as_ref(ctx).enabled));
             let workspace = mock_workspace(&mut app);
-            let window_id = workspace.read(&app, |workspace, _| workspace.window_id);
-            let (mut tmux, connection, events) = fake_tmux();
-            app.update(|ctx| {
-                TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
-                    sessions.attach_with_connection(connection, events, window_id, ctx)
-                });
-            });
-            tmux.handshake("demo", "3.8");
-            assert_eq!(read_command(&mut tmux).await, commands::list_windows());
-            tmux.reply(&["@0 %0 zsh"]);
-            for _ in 0..1000 {
-                if workspace.read(&app, |workspace, _| workspace.tabs.len()) == 2 {
-                    break;
-                }
-                warpui::r#async::Timer::after(Duration::from_millis(5)).await;
-            }
+            let mut tmux = attach_one_window(&mut app, &workspace).await;
             let tmux_tab = workspace.read(&app, |workspace, _| workspace.tabs[1].pane_group.id());
 
             workspace.update(&mut app, |workspace, ctx| {
@@ -6582,6 +6567,101 @@ mod tmux_control_tabs {
             app.read(|ctx| {
                 assert!(!UndoCloseStack::as_ref(ctx).is_pane_group_tab_in_stack(tmux_tab));
             });
+        });
+    }
+
+    /// Attaches a session with one window through `TmuxControlSessions` and waits for its tab.
+    async fn attach_one_window(app: &mut App, workspace: &ViewHandle<Workspace>) -> FakeTmux {
+        let window_id = workspace.read(app, |workspace, _| workspace.window_id);
+        let (mut tmux, connection, events) = fake_tmux();
+        app.update(|ctx| {
+            TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.attach_with_connection(connection, events, window_id, ctx)
+            });
+        });
+        tmux.handshake("demo", "3.8");
+        assert_eq!(read_command(&mut tmux).await, commands::list_windows());
+        tmux.reply(&["@0 %0 zsh"]);
+        for _ in 0..1000 {
+            if workspace.read(app, |workspace, _| workspace.tabs.len()) == 2 {
+                return tmux;
+            }
+            warpui::r#async::Timer::after(Duration::from_millis(5)).await;
+        }
+        panic!("timed out waiting for the tmux tab");
+    }
+
+    #[test]
+    fn test_tmux_closing_the_window_releases_its_sessions() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let window_id = workspace.read(&app, |workspace, _| workspace.window_id);
+            let mut tmux = attach_one_window(&mut app, &workspace).await;
+            let (sender, attached) = async_channel::unbounded();
+            app.update(|ctx| {
+                ctx.subscribe_to_model(
+                    &TmuxControlSessions::handle(ctx),
+                    move |_, event: &TmuxControlEvent, _| {
+                        if let TmuxControlEvent::Attached { owner_window, .. } = event {
+                            let _ = sender.try_send(*owner_window);
+                        }
+                    },
+                );
+            });
+
+            app.update(|ctx| ctx.simulate_window_closed(window_id));
+            assert!(
+                written_commands(&mut tmux)
+                    .await
+                    .contains(&commands::detach_client())
+            );
+
+            let other = WindowId::new();
+            let (mut second, connection, events) = fake_tmux();
+            app.update(|ctx| {
+                TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.attach_with_connection(connection, events, other, ctx)
+                });
+            });
+            second.handshake("demo", "3.8");
+            assert_eq!(read_command(&mut second).await, commands::list_windows());
+            second.reply(&["@0 %0 zsh"]);
+            for _ in 0..1000 {
+                if let Ok(owner_window) = attached.try_recv() {
+                    assert_eq!(owner_window, other);
+                    return;
+                }
+                warpui::r#async::Timer::after(Duration::from_millis(5)).await;
+            }
+            panic!("the new window never attached");
+        });
+    }
+
+    /// Closing the last tab closes the window, which must still release the tab's tmux window.
+    #[test]
+    fn test_tmux_closing_the_last_tab_releases_its_window() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let window_id = workspace.read(&app, |workspace, _| workspace.window_id);
+            let mut tmux = attach_one_window(&mut app, &workspace).await;
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.close_tab(0, true, false, ctx);
+                assert_eq!(workspace.tabs.len(), 1);
+                workspace.close_tab(0, true, true, ctx);
+            });
+            // The test platform ignores `close_window`, so this stands in for the window closing.
+            app.update(|ctx| ctx.simulate_window_closed(window_id));
+            assert!(
+                written_commands(&mut tmux)
+                    .await
+                    .contains(&commands::detach_client())
+            );
         });
     }
 

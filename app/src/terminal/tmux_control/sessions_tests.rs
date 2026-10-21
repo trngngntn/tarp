@@ -4,7 +4,9 @@ use tmux_control::commands::{self, WindowInfo};
 use tmux_control::connection::{Connection, ConnectionConfig, ConnectionEvent};
 use tmux_control::testing::FakeTmux;
 use tmux_control::{PaneId, SessionId, WindowId as TmuxWindowId};
-use warpui::{App, ModelHandle, WindowId};
+use warpui::elements::Empty;
+use warpui::platform::WindowStyle;
+use warpui::{App, AppContext, Element, Entity, ModelHandle, TypedActionView, View, WindowId};
 
 use super::*;
 
@@ -19,6 +21,26 @@ fn info(window: u32, pane: u32, name: &str) -> WindowInfo {
         pane: PaneId(pane),
         name: name.to_owned(),
     }
+}
+
+struct OwnerView;
+
+impl Entity for OwnerView {
+    type Event = ();
+}
+
+impl View for OwnerView {
+    fn ui_name() -> &'static str {
+        "OwnerView"
+    }
+
+    fn render(&self, _: &AppContext) -> Box<dyn Element> {
+        Empty::new().finish()
+    }
+}
+
+impl TypedActionView for OwnerView {
+    type Action = ();
 }
 
 struct Fixture {
@@ -36,10 +58,11 @@ impl Fixture {
                 let _ = sender.try_send(event.clone());
             });
         });
+        let (owner, _) = app.add_window(WindowStyle::NotStealFocus, |_| OwnerView);
         Self {
             sessions,
             events,
-            owner: WindowId::new(),
+            owner,
         }
     }
 
@@ -273,6 +296,26 @@ fn attaching_from_another_window_is_refused() {
         assert!(matches!(
             fixture.next_event().await,
             TmuxControlEvent::WindowAdded { owner_window, .. } if owner_window == first_owner
+        ));
+    });
+}
+
+#[test]
+fn attaching_after_the_owner_window_closed_takes_the_session_over() {
+    App::test((), |mut app| async move {
+        let mut fixture = Fixture::new(&mut app);
+        let (mut first, _first_connection) = fixture.attached(&mut app).await;
+        app.update(|ctx| ctx.simulate_window_closed(fixture.owner));
+        let other = WindowId::new();
+        fixture.owner = other;
+        let (mut second, _second_connection) = fixture.connect(&mut app);
+        second.handshake("demo", "3.8");
+        assert_eq!(read_command(&mut second).await, "detach-client");
+        assert_eq!(read_command(&mut first).await, commands::list_windows());
+        first.reply(&["@0 %0 zsh"]);
+        assert!(matches!(
+            fixture.next_event().await,
+            TmuxControlEvent::Attached { owner_window, .. } if owner_window == other
         ));
     });
 }

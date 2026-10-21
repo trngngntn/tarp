@@ -29084,6 +29084,8 @@ impl View for Workspace {
                     pane_group.detach_panes(ctx);
                 });
             }
+            #[cfg(not(target_family = "wasm"))]
+            self.release_tmux_tabs(ctx);
         }
 
         let window_id = ctx.window_id();

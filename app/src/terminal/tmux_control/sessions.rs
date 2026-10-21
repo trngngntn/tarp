@@ -213,7 +213,8 @@ impl TmuxControlSessions {
     }
 
     /// Leaves `connection` and, for the window that owns the session, shows its windows again
-    /// through the connection that already owns it. Another window is refused.
+    /// through the connection that already owns it. Another window is refused while the owner is
+    /// open, and takes the session over once it is gone.
     fn supersede(
         &mut self,
         id: u64,
@@ -227,15 +228,18 @@ impl TmuxControlSessions {
         link.state = LinkState::Superseded;
         let owner_window = link.owner_window;
         connection.detach();
-        let Some(session) = self.sessions.get(&key) else {
+        let Some(session) = self.sessions.get_mut(&key) else {
             return;
         };
         if session.owner_window != owner_window {
-            ctx.emit(TmuxControlEvent::AttachFailed {
-                owner_window,
-                message: "already open in another Tarp window".to_owned(),
-            });
-            return;
+            if ctx.is_window_open(session.owner_window) {
+                ctx.emit(TmuxControlEvent::AttachFailed {
+                    owner_window,
+                    message: "already open in another Tarp window".to_owned(),
+                });
+                return;
+            }
+            session.owner_window = owner_window;
         }
         let windows = list_windows(&session.connection);
         ctx.spawn(windows, move |me, windows, ctx| {
