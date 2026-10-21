@@ -202,7 +202,8 @@ fn attach_refused_reports_tmux_reason() {
 
 #[test]
 fn restore_then_live_output_has_no_duplicate_lines() {
-    let script = "i=0; while [ $i -lt 3000 ]; do echo L$i; i=$((i+1)); done; sleep 30";
+    const LIVE_CHUNKS: usize = 20;
+    let script = "i=0; while [ $i -lt 3000 ]; do echo L$i; i=$((i+1)); sleep 0.01; done; sleep 30";
     let Some(server) = PrivateServer::start("dupes", 40, 5, script, "L") else {
         return;
     };
@@ -210,14 +211,24 @@ fn restore_then_live_output_has_no_duplicate_lines() {
     let rx = connection.subscribe_pane(PaneId(0));
     connection.resize_window(WindowId(0), 40, 5);
     connection.restore_pane(PaneId(0));
-    let mut text = Vec::new();
-    while let Some(event) = recv_timeout(&rx, Duration::from_secs(3)) {
-        match event {
-            PaneEvent::Restored(bytes) | PaneEvent::Output(bytes) => text.extend(bytes),
-            PaneEvent::Paused => break,
+    let mut restored = None;
+    let mut live = Vec::new();
+    let mut live_chunks = 0;
+    while live_chunks < LIVE_CHUNKS {
+        match recv_timeout(&rx, Duration::from_secs(3)) {
+            Some(PaneEvent::Restored(bytes)) => restored = Some(bytes),
+            Some(PaneEvent::Output(bytes)) if restored.is_some() => {
+                live.extend(bytes);
+                live_chunks += 1;
+            }
+            Some(PaneEvent::Output(_)) => {}
+            Some(PaneEvent::Paused) | None => break,
         }
     }
-    let numbers = l_numbers(&text);
-    assert!(numbers.len() > 1);
-    assert!(numbers.windows(2).all(|pair| pair[0] < pair[1]));
+    let restored = l_numbers(&restored.expect("no Restored event"));
+    let live = l_numbers(&live);
+    assert!(live_chunks > 0, "no live output after the restore");
+    assert!(!restored.is_empty() && !live.is_empty());
+    let all: Vec<_> = restored.iter().chain(&live).collect();
+    assert!(all.windows(2).all(|pair| pair[0] < pair[1]), "{all:?}");
 }
