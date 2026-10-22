@@ -323,7 +323,9 @@ impl SnackbarHeader {
         params: &BlockGridParams,
         scroll_position: ScrollPosition,
     ) -> Option<SnackbarHeader> {
-        if !snackbar_enabled {
+        // A hidden-command-grid block (a tmux restore) has no command to pin, and a header would
+        // shift the grid rows the renderer paints.
+        if !snackbar_enabled || block.should_hide_command_grid() {
             self.clear_state();
             return None;
         }
@@ -4919,3 +4921,7 @@ where
 
     button.finish()
 }
+
+#[cfg(test)]
+#[path = "block_list_element_tests.rs"]
+mod tests;
