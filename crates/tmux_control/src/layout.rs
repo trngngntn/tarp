@@ -34,7 +34,10 @@ impl Cursor<'_> {
     }
 
     fn number(&mut self) -> Option<usize> {
-        let end = self.0.find(|c: char| !c.is_ascii_digit()).unwrap_or(self.0.len());
+        let end = self
+            .0
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(self.0.len());
         let number = self.0[..end].parse().ok()?;
         self.0 = &self.0[end..];
         Some(number)

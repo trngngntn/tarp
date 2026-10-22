@@ -2,11 +2,10 @@ pub mod telemetry;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-
-use chrono::Local;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use chrono::Local;
 use languages::language_by_local_filename;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::rect::RectF;
@@ -20,12 +19,12 @@ use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme};
 use warpui::elements::{
-    Border, ChildAnchor, Rect, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
+    Border, ChildAnchor, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
     Container, CornerRadius, CrossAxisAlignment, DispatchEventResult, DragAxis, DragBarSide,
     Draggable, DropShadow, DropTarget, Element, Empty, EventHandler, Expanded, Fill as ElementFill,
     Flex, Highlight, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
     OffsetPositioning, Padding, ParentAnchor, ParentElement, ParentOffsetBounds,
-    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Resizable,
+    PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Rect, Resizable,
     ResizableStateHandle, SavePosition, ScrollTarget, ScrollToPositionMode, ScrollbarWidth,
     Shrinkable, Stack, Text, resizable_state_handle,
 };
@@ -1258,7 +1257,10 @@ pub(super) fn tab_terminal_view_ids(pane_group: &PaneGroup, app: &AppContext) ->
 }
 
 /// Each visible terminal's view id with the pid of its shell, for terminals whose shell is alive.
-pub(super) fn tab_terminal_shell_pids(pane_group: &PaneGroup, app: &AppContext) -> Vec<(EntityId, u32)> {
+pub(super) fn tab_terminal_shell_pids(
+    pane_group: &PaneGroup,
+    app: &AppContext,
+) -> Vec<(EntityId, u32)> {
     pane_group
         .visible_pane_ids()
         .into_iter()
@@ -1617,10 +1619,14 @@ fn render_control_bar(
     let theme = appearance.theme();
     let sub_text = theme.sub_text_color(theme.background());
 
-    let search_icon = ConstrainedBox::new(WarpIcon::PhMagnifyingGlassFill.to_warpui_icon(sub_text).finish())
-        .with_width(SEARCH_ICON_SIZE)
-        .with_height(SEARCH_ICON_SIZE)
-        .finish();
+    let search_icon = ConstrainedBox::new(
+        WarpIcon::PhMagnifyingGlassFill
+            .to_warpui_icon(sub_text)
+            .finish(),
+    )
+    .with_width(SEARCH_ICON_SIZE)
+    .with_height(SEARCH_ICON_SIZE)
+    .finish();
 
     let text_input = TextInput::new(
         search_editor.clone(),
@@ -2411,10 +2417,10 @@ fn render_groups(
     } else {
         None
     };
-    let has_groups = workspace
-        .tabs
-        .iter()
-        .any(|tab| tab.group_id.is_some_and(|gid| workspace.tab_groups.contains_key(&gid)));
+    let has_groups = workspace.tabs.iter().any(|tab| {
+        tab.group_id
+            .is_some_and(|gid| workspace.tab_groups.contains_key(&gid))
+    });
     let mut i = 0;
     if framed {
         // Sections 14 px apart, rows 1 px apart; tabs in no group gather in "Other" at the end
@@ -3535,7 +3541,9 @@ fn render_framed_group_header(
             member_count,
             needs_attention_count,
             is_collapsed,
-            hovered.then(|| sidebar::section_new_tab_button(Some(group_id), mouse_states.new_tab.clone())),
+            hovered.then(|| {
+                sidebar::section_new_tab_button(Some(group_id), mouse_states.new_tab.clone())
+            }),
             app,
         ),
     };
@@ -3585,9 +3593,7 @@ fn render_framed_other_section(
     app: &AppContext,
 ) -> Box<dyn Element> {
     let collapsed = show_header && state.other_section_collapsed;
-    if !show_header
-        && let Ok(mut header_state) = state.other_section_header_mouse_state.lock()
-    {
+    if !show_header && let Ok(mut header_state) = state.other_section_header_mouse_state.lock() {
         // Unmounted header: drop a hover it can no longer see end (see the group header).
         header_state.reset_interaction_state();
     }
@@ -3845,9 +3851,8 @@ fn render_grouped_tab_container(
 
         if framed
             && let Some((last_index, _)) = members.last()
-            && live_drop.is_some_and(|(before, group)| {
-                group == Some(group_id) && before == last_index + 1
-            })
+            && live_drop
+                .is_some_and(|(before, group)| group == Some(group_id) && before == last_index + 1)
         {
             content.add_child(sidebar::insert_line());
         }
@@ -4199,7 +4204,9 @@ fn render_title_indicator(theme: &WarpTheme) -> Box<dyn Element> {
     ConstrainedBox::new(
         Rect::new()
             .with_background(theme.accent())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(INDICATOR_DOT_SIZE / 2.)))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
+                INDICATOR_DOT_SIZE / 2.,
+            )))
             .finish(),
     )
     .with_width(INDICATOR_DOT_SIZE)
@@ -8336,74 +8343,67 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
 
     // One line per row: the title from "Pane title as". The second line
     // (branch, folder or agent activity) added nothing in the sidebar.
-    let title_element: Box<dyn Element> =
-        if let TypedPane::Terminal(terminal_pane) = &props.typed {
-            let terminal_view = terminal_pane.terminal_view(app).as_ref(app);
-            let terminal_title = terminal_view.terminal_title_from_shell();
-            let git_branch = terminal_view.current_git_branch(app);
-            let working_directory = resolved_terminal_working_directory(terminal_view, app);
-            let working_directory_text = working_directory
-                .clone()
-                .unwrap_or_else(|| terminal_title.clone());
-            let branch_display =
-                branch_label_display(git_branch.as_deref(), working_directory_text.as_str());
+    let title_element: Box<dyn Element> = if let TypedPane::Terminal(terminal_pane) = &props.typed {
+        let terminal_view = terminal_pane.terminal_view(app).as_ref(app);
+        let terminal_title = terminal_view.terminal_title_from_shell();
+        let git_branch = terminal_view.current_git_branch(app);
+        let working_directory = resolved_terminal_working_directory(terminal_view, app);
+        let working_directory_text = working_directory
+            .clone()
+            .unwrap_or_else(|| terminal_title.clone());
+        let branch_display =
+            branch_label_display(git_branch.as_deref(), working_directory_text.as_str());
 
-            // Title based on "Pane title as"
-            let title: Box<dyn Element> = render_pane_title_slot(
-                &props,
-                || match primary_info {
-                    VerticalTabsPrimaryInfo::Command => render_terminal_primary_line_for_view(
-                        terminal_view,
-                        appearance,
-                        main_text_color,
-                        app,
-                    ),
-                    VerticalTabsPrimaryInfo::WorkingDirectory => {
-                        Text::new_inline(working_directory_text.clone(), font_family, 12.)
-                            .with_clip(ClipConfig::start())
-                            .with_color(main_text_color.into())
-                            .finish()
+        // Title based on "Pane title as"
+        let title: Box<dyn Element> = render_pane_title_slot(
+            &props,
+            || match primary_info {
+                VerticalTabsPrimaryInfo::Command => render_terminal_primary_line_for_view(
+                    terminal_view,
+                    appearance,
+                    main_text_color,
+                    app,
+                ),
+                VerticalTabsPrimaryInfo::WorkingDirectory => {
+                    Text::new_inline(working_directory_text.clone(), font_family, 12.)
+                        .with_clip(ClipConfig::start())
+                        .with_color(main_text_color.into())
+                        .finish()
+                }
+                VerticalTabsPrimaryInfo::Branch => match branch_display {
+                    (branch_text, true) => {
+                        render_git_branch_text(&branch_text, main_text_color, 12., appearance)
                     }
-                    VerticalTabsPrimaryInfo::Branch => match branch_display {
-                        (branch_text, true) => {
-                            render_git_branch_text(&branch_text, main_text_color, 12., appearance)
-                        }
-                        (fallback_text, false) => Text::new_inline(fallback_text, font_family, 12.)
-                            .with_clip(ClipConfig::start())
-                            .with_color(main_text_color.into())
-                            .finish(),
-                    },
+                    (fallback_text, false) => Text::new_inline(fallback_text, font_family, 12.)
+                        .with_clip(ClipConfig::start())
+                        .with_color(main_text_color.into())
+                        .finish(),
                 },
-                12.,
-                main_text_color,
-                ClipConfig::ellipsis(),
-                appearance,
-                app,
-            );
+            },
+            12.,
+            main_text_color,
+            ClipConfig::ellipsis(),
+            appearance,
+            app,
+        );
 
-            title
-        } else {
-            let title = render_pane_title_slot(
-                &props,
-                || {
-                    render_compact_non_terminal_title(
-                        props.displayed_title(),
-                        &props.typed,
-                        appearance,
-                    )
-                },
-                12.,
-                main_text_color,
-                if matches!(props.typed, TypedPane::Code(_)) {
-                    ClipConfig::start()
-                } else {
-                    ClipConfig::ellipsis()
-                },
-                appearance,
-                app,
-            );
-            title
-        };
+        title
+    } else {
+        let title = render_pane_title_slot(
+            &props,
+            || render_compact_non_terminal_title(props.displayed_title(), &props.typed, appearance),
+            12.,
+            main_text_color,
+            if matches!(props.typed, TypedPane::Code(_)) {
+                ClipConfig::start()
+            } else {
+                ClipConfig::ellipsis()
+            },
+            appearance,
+            app,
+        );
+        title
+    };
 
     // A sleeping tab reads as its muted name, nothing live.
     let title_element = if props.is_inactive {
@@ -8939,8 +8939,6 @@ pub(in crate::workspace::view) mod morph {
 // ponytail: hard-coded light colors; a dark theme gets the same light-mode values. Upgrade path:
 // derive each token from the theme when the sidebar gets a dark mode.
 pub(super) mod sidebar {
-    use crate::editor::EditorView;
-    use warpui::ViewHandle;
     use std::collections::HashSet;
     use std::sync::OnceLock;
 
@@ -8960,7 +8958,7 @@ pub(super) mod sidebar {
     use warpui::platform::Cursor;
     use warpui::prelude::Align;
     use warpui::text_layout::ClipConfig;
-    use warpui::{AppContext, EntityId, SingletonEntity};
+    use warpui::{AppContext, EntityId, SingletonEntity, ViewHandle};
 
     use super::{
         PaneProps, TypedPane, agent_tab_text_preference, preferred_agent_tab_titles,
@@ -8970,6 +8968,7 @@ pub(super) mod sidebar {
     };
     use crate::ai::agent::conversation::ConversationStatus;
     use crate::appearance::Appearance;
+    use crate::editor::EditorView;
     use crate::tab::TabData;
     use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
     use crate::workspace::Workspace;
@@ -9020,11 +9019,11 @@ pub(super) mod sidebar {
         #![allow(non_snake_case)]
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        use super::{black, rgb};
         use pathfinder_color::ColorU;
         use warp_core::ui::theme::ColorScheme;
         use warpui::{AppContext, SingletonEntity};
 
+        use super::{black, rgb};
         use crate::appearance::Appearance;
 
         static DARK: AtomicBool = AtomicBool::new(false);
@@ -9032,8 +9031,8 @@ pub(super) mod sidebar {
         /// Follows the active theme: a theme with light text on a dark background gets the dark
         /// palette. Every window shares the one theme, so one switch serves them all.
         pub fn sync(app: &AppContext) {
-            let dark = Appearance::as_ref(app).theme().inferred_color_scheme()
-                == ColorScheme::LightOnDark;
+            let dark =
+                Appearance::as_ref(app).theme().inferred_color_scheme() == ColorScheme::LightOnDark;
             DARK.store(dark, Ordering::Relaxed);
         }
 
@@ -9042,7 +9041,12 @@ pub(super) mod sidebar {
         }
 
         const fn white(alpha: u8) -> ColorU {
-            ColorU { r: 255, g: 255, b: 255, a: alpha }
+            ColorU {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: alpha,
+            }
         }
 
         macro_rules! tokens {
@@ -9344,9 +9348,11 @@ pub(super) mod sidebar {
                     stack.add_child(glyph(WarpIcon::SidebarDoneTickRead, colors::RING(), 15.));
                 }
             }
-            RowStatus::Pending => {
-                stack.add_child(glyph(WarpIcon::SidebarDoneRing, colors::PENDING_RING(), 15.))
-            }
+            RowStatus::Pending => stack.add_child(glyph(
+                WarpIcon::SidebarDoneRing,
+                colors::PENDING_RING(),
+                15.,
+            )),
             RowStatus::Working => {
                 stack.add_child(glyph(WarpIcon::SidebarWorkingTrack, colors::TRACK(), 15.));
                 // The turning arc is a native layer where the window has one (working_rings);
@@ -10072,9 +10078,11 @@ pub(super) mod sidebar {
             .mouse_states
             .iter()
             .position(|mouse_state| mouse_state.lock().is_ok_and(|m| m.is_hovered()));
-        state
-            .card
-            .sync(hovered.and_then(|index| rings.get(index)).map(|ring| ring.card()));
+        state.card.sync(
+            hovered
+                .and_then(|index| rings.get(index))
+                .map(|ring| ring.card()),
+        );
         let dark = colors::is_dark();
         let font = font(app);
         let count = rings.len();
@@ -10373,7 +10381,11 @@ pub(super) mod sidebar {
         workspace: &Workspace,
     ) -> Option<(usize, Option<crate::workspace::tab_group::TabGroupId>)> {
         let target = workspace.sidebar_drop_target?;
-        if !workspace.tabs.iter().any(|tab| tab.draggable_state.is_dragging()) {
+        if !workspace
+            .tabs
+            .iter()
+            .any(|tab| tab.draggable_state.is_dragging())
+        {
             return None;
         }
         Some((target.before_index(&workspace.tabs)?, target.group))
@@ -10426,15 +10438,18 @@ pub(super) mod sidebar {
             .get(&tab.pane_group.id())
             .map(|path| tilde_path(path))
             .or_else(|| {
-                pane_group.visible_pane_ids().into_iter().find_map(|pane_id| {
-                    let TypedPane::Terminal(terminal_pane) =
-                        pane_group.resolve_pane_type(pane_id, app)
-                    else {
-                        return None;
-                    };
-                    let terminal_view = terminal_pane.terminal_view(app);
-                    resolved_terminal_working_directory(terminal_view.as_ref(app), app)
-                })
+                pane_group
+                    .visible_pane_ids()
+                    .into_iter()
+                    .find_map(|pane_id| {
+                        let TypedPane::Terminal(terminal_pane) =
+                            pane_group.resolve_pane_type(pane_id, app)
+                        else {
+                            return None;
+                        };
+                        let terminal_view = terminal_pane.terminal_view(app);
+                        resolved_terminal_working_directory(terminal_view.as_ref(app), app)
+                    })
             })
             .unwrap_or_default();
         let time = status_time(status, terminal_view_id, app);
@@ -10715,8 +10730,8 @@ pub(in crate::workspace::view) mod limit_rings {
     use std::time::SystemTime;
 
     use chrono::{Local, TimeZone};
-    use settings::Setting as _;
     use serde_json::Value;
+    use settings::Setting as _;
     use warpui::assets::asset_cache::AssetCache;
     use warpui::elements::MouseStateHandle;
     use warpui::image_cache::ImageType;

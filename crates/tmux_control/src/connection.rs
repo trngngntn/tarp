@@ -73,7 +73,10 @@ pub enum ConnectionError {
 pub enum PaneEvent {
     Output(Vec<u8>),
     /// Bytes that redraw the pane from scratch at `size`; output after it continues from there.
-    Restored { bytes: Vec<u8>, size: PaneSize },
+    Restored {
+        bytes: Vec<u8>,
+        size: PaneSize,
+    },
     /// tmux stopped sending output; call `Connection::resume_if_paused` once caught up.
     Paused,
 }

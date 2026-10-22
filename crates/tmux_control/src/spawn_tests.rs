@@ -249,10 +249,11 @@ fn resizing_a_window_restores_its_pane_at_the_new_size() {
     let rx = connection.subscribe_pane(PaneId(0));
     connection.resize_window(WindowId(0), 20, 3);
     connection.restore_pane(PaneId(0));
-    let mut restored = std::iter::from_fn(|| recv_timeout(&rx, SECS)).filter_map(|event| match event {
-        PaneEvent::Restored { size, .. } => Some(size),
-        PaneEvent::Output(_) | PaneEvent::Paused => None,
-    });
+    let mut restored =
+        std::iter::from_fn(|| recv_timeout(&rx, SECS)).filter_map(|event| match event {
+            PaneEvent::Restored { size, .. } => Some(size),
+            PaneEvent::Output(_) | PaneEvent::Paused => None,
+        });
     assert_eq!(restored.next(), Some(size(20, 3)));
     connection.resize_window(WindowId(0), 30, 4);
     assert_eq!(restored.next(), Some(size(30, 4)));

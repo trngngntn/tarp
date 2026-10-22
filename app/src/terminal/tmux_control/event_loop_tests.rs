@@ -4,10 +4,9 @@ use std::time::Duration;
 use futures::executor::block_on;
 use parking_lot::FairMutex;
 use tmux_control::connection::{Connection, ConnectionConfig, PaneEvent};
-use tmux_control::restore::{PaneCapture, PaneState, restore_bytes};
-use tmux_control::testing::FakeTmux;
 use tmux_control::layout::PaneSize;
-use tmux_control::testing::recv_timeout;
+use tmux_control::restore::{PaneCapture, PaneState, restore_bytes};
+use tmux_control::testing::{FakeTmux, recv_timeout};
 use tmux_control::{PaneId, SessionId, WindowId as TmuxWindowId, commands};
 use warp_terminal::model::grid::Dimensions as _;
 
@@ -75,7 +74,11 @@ fn restored(bytes: &[u8]) -> PaneEvent {
 }
 
 fn grid_size(model: &TerminalModel) -> PaneSize {
-    let grid = model.block_list().active_block().output_grid().grid_handler();
+    let grid = model
+        .block_list()
+        .active_block()
+        .output_grid()
+        .grid_handler();
     size(grid.columns(), grid.visible_rows())
 }
 
@@ -96,8 +99,7 @@ fn run_output_over(
 fn restored_and_live_output_reach_the_model_unwrapped() {
     let (_tmux, model, listener, binding, _pane_rx) = fixture(true);
     let (tx, rx) = async_channel::bounded(8);
-    tx.try_send(restored(b"\x1b[H\x1b[2J\x1b[3Jab"))
-        .unwrap();
+    tx.try_send(restored(b"\x1b[H\x1b[2J\x1b[3Jab")).unwrap();
     tx.try_send(PaneEvent::Output(
         b"\x1bPtmux;\x1b\x1b]0;t\x07\x1b\\cd".to_vec(),
     ))

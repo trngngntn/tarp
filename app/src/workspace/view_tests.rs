@@ -6746,7 +6746,8 @@ mod tmux_control_tabs {
             initialize_app(&mut app);
             let workspace = mock_workspace(&mut app);
             let mut tmux = attach_one_window(&mut app, &workspace).await;
-            let tmux_tab = workspace.read(&app, |workspace, _| workspace.tabs[1].pane_group.clone());
+            let tmux_tab =
+                workspace.read(&app, |workspace, _| workspace.tabs[1].pane_group.clone());
             // The window stays alive to be reopened, as an undoable close leaves it.
             workspace.update(&mut app, |workspace, ctx| workspace.on_window_closed(ctx));
             assert!(

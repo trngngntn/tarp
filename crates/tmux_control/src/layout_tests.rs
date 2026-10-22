@@ -30,7 +30,14 @@ fn split_layouts_list_every_pane() {
 
 #[test]
 fn malformed_layouts_are_rejected() {
-    for layout in ["", "e9dd", "e9dd,30x4,0,0", "e9dd,30x4,0,0[", "e9dd,30,0,0,0", "e9dd,30x4,0,0,0x"] {
+    for layout in [
+        "",
+        "e9dd",
+        "e9dd,30x4,0,0",
+        "e9dd,30x4,0,0[",
+        "e9dd,30,0,0,0",
+        "e9dd,30x4,0,0,0x",
+    ] {
         assert_eq!(pane_sizes(layout), None, "{layout}");
     }
 }

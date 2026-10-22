@@ -15,15 +15,15 @@ use super::{
     code_detail_kind_label, compact_branch_subtitle_display, detail_sidecar_width_and_bounds,
     detail_target_for_hovered_row, group_display_name, group_name_highlight_indices,
     matched_group_ids, merge_group_name_matches, non_terminal_search_text_fragments,
-    pane_ids_for_display_granularity, pane_search_text_fragments, preferred_agent_tab_titles,
-    push_normalized_unique_summary_label, search_fragments_contain_query,
-    select_summary_pane_kind_icons, should_keep_detail_sidecar_visible_for_mouse_position,
-    should_show_tab_group_header, shows_synced_inputs_indicator,
-    sort_summary_primary_labels_status_first, summary_overflow_count,
-    summary_search_text_fragments, tab_admitted_by_group_name, terminal_kind_badge_label,
-    terminal_primary_line_data, terminal_pull_request_badge_label, terminal_search_text_fragments,
-    terminal_title_fallback_font, uses_outer_group_container, pane_rows_title_override, visible_pane_ids_for_detail_target,
-    vtab_diff_stats_text,
+    pane_ids_for_display_granularity, pane_rows_title_override, pane_search_text_fragments,
+    preferred_agent_tab_titles, push_normalized_unique_summary_label,
+    search_fragments_contain_query, select_summary_pane_kind_icons,
+    should_keep_detail_sidecar_visible_for_mouse_position, should_show_tab_group_header,
+    shows_synced_inputs_indicator, sort_summary_primary_labels_status_first,
+    summary_overflow_count, summary_search_text_fragments, tab_admitted_by_group_name,
+    terminal_kind_badge_label, terminal_primary_line_data, terminal_pull_request_badge_label,
+    terminal_search_text_fragments, terminal_title_fallback_font, uses_outer_group_container,
+    visible_pane_ids_for_detail_target, vtab_diff_stats_text,
 };
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::context_chips::display_chip::GitLineChanges;
@@ -630,13 +630,15 @@ fn detail_sidecar_visibility_helper_clears_sidecar_outside_row_sidecar_and_safe_
 
 #[test]
 fn tmux_window_rows_show_the_window_name_in_a_grouped_panes_view() {
-    let title = |name: &str| pane_rows_title_override(
-        Some(name.to_owned()),
-        true,
-        true,
-        VerticalTabsDisplayGranularity::Panes,
-        false,
-    );
+    let title = |name: &str| {
+        pane_rows_title_override(
+            Some(name.to_owned()),
+            true,
+            true,
+            VerticalTabsDisplayGranularity::Panes,
+            false,
+        )
+    };
     assert_eq!(title("zsh").as_deref(), Some("zsh"));
     // A tmux rename sets the tab's custom title, which the row follows.
     assert_eq!(title("build").as_deref(), Some("build"));

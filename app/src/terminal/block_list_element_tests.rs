@@ -41,7 +41,11 @@ fn params() -> BlockGridParams {
     }
 }
 
-fn header_over(block: &Block, grid_origin: Vector2F, params: &BlockGridParams) -> Option<SnackbarHeader> {
+fn header_over(
+    block: &Block,
+    grid_origin: Vector2F,
+    params: &BlockGridParams,
+) -> Option<SnackbarHeader> {
     SnackbarHeader::default().update(
         true,
         true,
@@ -73,7 +77,10 @@ fn snackbar_is_not_pinned_over_a_restore_taller_than_the_viewport() {
     assert_eq!(header_over(block, grid_origin, &params), None);
     let painted = painted_rows(grid_origin, element_origin, &params, grid_len);
     for row in grid_len - VIEWPORT_ROWS..grid_len {
-        assert!(painted.contains(&row), "row {row} is on screen but not painted");
+        assert!(
+            painted.contains(&row),
+            "row {row} is on screen but not painted"
+        );
     }
 }
 
