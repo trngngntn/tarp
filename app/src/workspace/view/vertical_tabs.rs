@@ -2706,19 +2706,13 @@ fn render_tab_group_internal(
     let is_being_renamed = is_active && workspace.current_workspace_state.is_tab_being_renamed();
     let rename_editor = workspace.tab_rename_editor.clone();
     let has_custom_title = pane_group.custom_title(app).is_some();
-    // In Panes view, tabs inside a group render individual pane rows, so each
-    // pane keeps its own generated title. Propagating the tab's custom title as
-    // an override here would shadow every pane's title with the same string.
-    // In Tabs/Summary modes there is only one row per tab, so the tab-level
-    // custom title is still the right thing to show.
-    let displayed_tab_title_override =
-        if in_tab_group && matches!(display_granularity, VerticalTabsDisplayGranularity::Panes) {
-            None
-        } else {
-            (!uses_outer_group_container)
-                .then(|| pane_group.custom_title(app))
-                .flatten()
-        };
+    let displayed_tab_title_override = pane_rows_title_override(
+        pane_group.custom_title(app),
+        workspace.is_tmux_window_tab(pane_group_id),
+        in_tab_group,
+        display_granularity,
+        uses_outer_group_container,
+    );
     let is_menu_open_for_tab = workspace
         .show_tab_right_click_menu
         .is_some_and(|(idx, _)| idx == tab_index);
@@ -4972,6 +4966,29 @@ impl<'a> PaneProps<'a> {
 
 fn pane_matches_query(props: &PaneProps<'_>, query_lower: &str, app: &AppContext) -> bool {
     search_fragments_contain_query(&props.rendered_search_text_fragments(app), query_lower)
+}
+
+/// The tab's custom title to show in place of its pane rows' own titles.
+fn pane_rows_title_override(
+    custom_title: Option<String>,
+    is_tmux_window_tab: bool,
+    in_tab_group: bool,
+    display_granularity: VerticalTabsDisplayGranularity,
+    uses_outer_group_container: bool,
+) -> Option<String> {
+    if is_tmux_window_tab {
+        return custom_title;
+    }
+    // In Panes view, tabs inside a group render individual pane rows, so each
+    // pane keeps its own generated title. Propagating the tab's custom title as
+    // an override here would shadow every pane's title with the same string.
+    // In Tabs/Summary modes there is only one row per tab, so the tab-level
+    // custom title is still the right thing to show.
+    if in_tab_group && matches!(display_granularity, VerticalTabsDisplayGranularity::Panes) {
+        None
+    } else {
+        custom_title.filter(|_| !uses_outer_group_container)
+    }
 }
 
 fn uses_outer_group_container(display_granularity: VerticalTabsDisplayGranularity) -> bool {
