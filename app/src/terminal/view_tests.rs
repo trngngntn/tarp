@@ -5,6 +5,7 @@ use std::pin::pin;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use chrono::{Local, Utc};
 use parking_lot::FairMutex;
@@ -11021,6 +11022,86 @@ fn raw_mode_routes_keys_to_the_pty_and_hides_the_input_box() {
             assert!(view.should_write_typed_chars_to_pty(ctx));
             let model = view.model.lock();
             assert!(!view.is_input_box_visible(&model, ctx));
+        });
+    });
+}
+
+/// Top of the active block's first screen row (the last `rows` output lines) minus the
+/// viewport's scroll top, with the viewport following the bottom.
+fn active_screen_top_minus_scroll_top(
+    view: &mut TerminalView,
+    rows: usize,
+    ctx: &mut ViewContext<TerminalView>,
+) -> Lines {
+    view.maybe_show_use_agent_footer_in_blocklist(ctx);
+    let model = view.model.lock();
+    let block_list = model.block_list();
+    let viewport = view.viewport_state(block_list, InputMode::PinnedToBottom, ctx);
+    let block = block_list.active_block();
+    // Mirrors the painter, which draws a hidden-command-grid block's output right below its banner.
+    let output_offset = if block.should_hide_command_grid() {
+        block.block_banner_height()
+    } else {
+        block.output_grid_offset()
+    };
+    let bottom_of_output = viewport.top_of_block_in_lines(block_list.active_block_index())
+        + output_offset
+        + block.output_grid_displayed_height();
+    bottom_of_output - rows.into_lines() - viewport.scroll_top_in_lines()
+}
+
+#[test]
+fn raw_mode_screen_rows_fit_the_viewport_when_following_the_bottom() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            let size = *view.size_info();
+            let rows = size.rows();
+            {
+                let mut model = view.model.lock();
+                model.enter_raw_mode();
+                model.set_backend_grid_size(rows, size.columns());
+                let screen = (0..rows).map(|row| format!("row {row}")).join("\r\n");
+                model.process_bytes(screen.as_str());
+                model
+                    .block_list_mut()
+                    .active_block_mut()
+                    .set_was_long_running(AtomicBool::new(true));
+            }
+            let overhang = active_screen_top_minus_scroll_top(view, rows, ctx);
+            assert!(
+                overhang >= Lines::zero(),
+                "row 0 starts {overhang:?} lines above the viewport top"
+            );
+        });
+    });
+}
+
+#[test]
+fn normal_long_running_block_keeps_its_footer_and_padding() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            let rows = view.size_info().rows();
+            let output = (0..rows).map(|row| format!("row {row}")).join("\r\n");
+            view.model
+                .lock()
+                .simulate_long_running_block("cat", output.as_str());
+            let overhang = active_screen_top_minus_scroll_top(view, rows, ctx);
+            assert!(
+                overhang < Lines::zero(),
+                "normal blocks keep their padding: {overhang:?}"
+            );
+            let model = view.model.lock();
+            let block_list = model.block_list();
+            let footer = block_list
+                .last_non_hidden_rich_content_block_after_block(Some(
+                    block_list.active_block_index(),
+                ))
+                .map(|(_, item)| item.view_id);
+            assert_eq!(footer, Some(view.use_agent_footer.id()));
         });
     });
 }
