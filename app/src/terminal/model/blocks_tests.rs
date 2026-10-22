@@ -2654,3 +2654,26 @@ fn agent_transcript_navigable_items_include_prompts_and_user_shell_blocks() {
         ]
     );
 }
+
+#[test]
+fn raw_mode_block_never_has_the_memory_stats_footer() {
+    let mut block_list = TestBlockListBuilder::new().build();
+    block_list.set_show_memory_stats(true);
+    assert!(block_list.active_block().has_footer());
+
+    block_list.enter_raw_mode();
+    assert!(!block_list.active_block().has_footer());
+    assert_eq!(block_list.active_block().footer_height(), Lines::zero());
+
+    block_list.set_show_memory_stats(true);
+    assert!(!block_list.active_block().has_footer());
+}
+
+#[test]
+fn normal_block_keeps_the_memory_stats_footer() {
+    let mut block_list = TestBlockListBuilder::new().build();
+    block_list.set_show_memory_stats(true);
+    assert!(block_list.active_block().has_footer());
+    block_list.set_show_memory_stats(false);
+    assert!(!block_list.active_block().has_footer());
+}
