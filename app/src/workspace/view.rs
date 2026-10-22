@@ -1247,6 +1247,9 @@ pub struct Workspace {
     /// tmux tabs created in the background and not shown since.
     #[cfg(not(target_family = "wasm"))]
     unshown_tmux_tabs: HashSet<EntityId>,
+    /// tmux tabs released as the window closed, which undoing the close must not bring back.
+    #[cfg(not(target_family = "wasm"))]
+    released_tmux_tabs: HashSet<EntityId>,
     left_panel_view: ViewHandle<LeftPanelView>,
     left_panel_views: Vec<ToolPanelView>,
     right_panel_view: ViewHandle<RightPanelView>,
@@ -3698,6 +3701,8 @@ impl Workspace {
             tmux_window_tabs: HashMap::new(),
             #[cfg(not(target_family = "wasm"))]
             unshown_tmux_tabs: HashSet::new(),
+            #[cfg(not(target_family = "wasm"))]
+            released_tmux_tabs: HashSet::new(),
             left_panel_view,
             left_panel_views,
             right_panel_view,
@@ -12989,6 +12994,8 @@ impl Workspace {
 
     /// Update this workspace when it is reopened after being closed.
     pub fn handle_reopen(&mut self, ctx: &mut ViewContext<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        self.drop_released_tmux_tabs(ctx);
         self.sync_window_button_visibility(ctx);
         for pane_group in self.tab_views() {
             pane_group.update(ctx, |pane_group, ctx| {

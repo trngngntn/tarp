@@ -6736,6 +6736,91 @@ mod tmux_control_tabs {
         panic!("timed out waiting for a tmux command");
     }
 
+    /// Undoing a window close brings back the window but not its released tmux tabs, which
+    /// re-attaching shows again.
+    #[test]
+    fn test_tmux_undoing_a_window_close_drops_released_tabs() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let mut tmux = attach_one_window(&mut app, &workspace).await;
+            let tmux_tab = workspace.read(&app, |workspace, _| workspace.tabs[1].pane_group.clone());
+            // The window stays alive to be reopened, as an undoable close leaves it.
+            workspace.update(&mut app, |workspace, ctx| workspace.on_window_closed(ctx));
+            assert!(
+                written_commands(&mut tmux)
+                    .await
+                    .contains(&commands::detach_client())
+            );
+
+            let (sender, attached) = async_channel::unbounded();
+            app.update(|ctx| {
+                ctx.subscribe_to_model(
+                    &TmuxControlSessions::handle(ctx),
+                    move |_, event: &TmuxControlEvent, _| {
+                        if let TmuxControlEvent::Attached { .. } = event {
+                            let _ = sender.try_send(());
+                        }
+                    },
+                );
+            });
+            let (mut second, connection, events) = fake_tmux();
+            app.update(|ctx| {
+                TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.attach_with_connection(connection, events, WindowId::new(), ctx)
+                });
+            });
+            second.handshake("demo", "3.8");
+            assert_eq!(read_command(&mut second).await, commands::list_windows());
+            second.reply(&["@0 %0 zsh"]);
+            for _ in 0..1000 {
+                if attached.try_recv().is_ok() {
+                    break;
+                }
+                warpui::r#async::Timer::after(Duration::from_millis(5)).await;
+            }
+
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.handle_reopen(ctx);
+                assert_eq!(workspace.tabs.len(), 1);
+                assert_ne!(workspace.tabs[0].pane_group.id(), tmux_tab.id());
+                assert_eq!(workspace.active_tab_index, 0);
+            });
+            // Cleaning up the released tab again must leave the re-attached session alone.
+            tmux_tab.update(&mut app, |pane_group, ctx| pane_group.clean_up_panes(ctx));
+            assert!(
+                !written_commands(&mut second)
+                    .await
+                    .contains(&commands::detach_client())
+            );
+        });
+    }
+
+    #[test]
+    fn test_tmux_undoing_the_close_of_a_window_of_tmux_tabs_opens_a_terminal_tab() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let _tmux = attach_one_window(&mut app, &workspace).await;
+            let tmux_tab = workspace.update(&mut app, |workspace, ctx| {
+                workspace.close_tab(0, true, false, ctx);
+                workspace.tabs[0].pane_group.id()
+            });
+            // The window stays alive to be reopened, as an undoable close leaves it.
+            workspace.update(&mut app, |workspace, ctx| workspace.on_window_closed(ctx));
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.handle_reopen(ctx);
+                assert_eq!(workspace.tabs.len(), 1);
+                assert_ne!(workspace.tabs[0].pane_group.id(), tmux_tab);
+                assert_eq!(workspace.active_tab_index, 0);
+            });
+        });
+    }
+
     /// A background tab learns its size only when shown, and tmux only redraws a pane on request.
     #[test]
     fn test_tmux_activating_a_background_tab_restores_it() {

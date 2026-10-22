@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::mpsc::SyncSender;
 
@@ -31,6 +32,8 @@ pub struct TmuxPaneBinding {
 pub struct TmuxTerminalManager {
     model: Arc<FairMutex<TerminalModel>>,
     binding: TmuxPaneBinding,
+    /// Set once the pane is released, so a later close can't release a window re-attached since.
+    released: Cell<bool>,
 
     // Hold strong references so the UI framework doesn't deallocate these models.
     _pty_controller: ModelHandle<PtyController>,
@@ -76,6 +79,7 @@ impl TmuxTerminalManager {
         let manager = Self {
             model: terminal.model,
             binding,
+            released: Cell::new(false),
             _pty_controller: terminal.pty_controller,
             _event_loop: terminal.event_loop,
             _view: terminal.view,
@@ -93,6 +97,9 @@ impl TerminalManager for TmuxTerminalManager {
     fn on_view_detached(&self, detach_type: DetachType, app: &mut AppContext) {
         match detach_type {
             DetachType::Closed => {
+                if self.released.replace(true) {
+                    return;
+                }
                 let TmuxPaneBinding {
                     connection,
                     key,

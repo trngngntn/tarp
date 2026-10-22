@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::mem;
 
 use tmux_control::WindowId as TmuxWindowId;
 use tmux_control::commands::WindowInfo;
@@ -186,8 +187,46 @@ impl Workspace {
             .map(|tab| tab.pane_group.clone())
             .collect();
         for pane_group in pane_groups {
+            self.released_tmux_tabs.insert(pane_group.id());
             pane_group.update(ctx, |pane_group, ctx| pane_group.clean_up_panes(ctx));
         }
+    }
+
+    /// Removes the tabs `release_tmux_tabs` released, as the window's close is undone, keeping the
+    /// active tab if it remains and opening a terminal tab if none does.
+    pub(super) fn drop_released_tmux_tabs(&mut self, ctx: &mut ViewContext<Self>) {
+        let released = mem::take(&mut self.released_tmux_tabs);
+        if released.is_empty() {
+            return;
+        }
+        let active = self
+            .tabs
+            .get(self.active_tab_index)
+            .map(|tab| tab.pane_group.id());
+        let mut groups = Vec::new();
+        self.tabs.retain(|tab| {
+            let keep = !released.contains(&tab.pane_group.id());
+            if !keep {
+                groups.extend(tab.group_id);
+            }
+            keep
+        });
+        self.tab_mru_order.retain(|id| !released.contains(id));
+        for group in groups {
+            self.prune_empty_tab_group(group, ctx);
+        }
+        if self.tabs.is_empty() {
+            self.active_tab_index = 0;
+            self.add_terminal_tab(false, ctx);
+            return;
+        }
+        let index = self
+            .tabs
+            .iter()
+            .position(|tab| Some(tab.pane_group.id()) == active)
+            .unwrap_or_else(|| self.active_tab_index.min(self.tabs.len() - 1));
+        self.activate_tab_internal(index, ctx);
+        ctx.notify();
     }
 
     pub(super) fn is_tmux_window_tab(&self, pane_group_id: EntityId) -> bool {
