@@ -1,10 +1,12 @@
+use crate::layout::PaneSize;
+
 pub const STATE_FORMAT: &str = "#{cursor_x} #{cursor_y} #{alternate_on} #{alternate_saved_x} \
     #{alternate_saved_y} #{history_size} #{pane_height} #{bracket_paste_flag} \
     #{keypad_cursor_flag} #{keypad_flag} #{mouse_standard_flag} #{mouse_button_flag} \
     #{mouse_any_flag} #{mouse_sgr_flag} #{cursor_flag} #{scroll_region_upper} \
-    #{scroll_region_lower}";
+    #{scroll_region_lower} #{pane_width}";
 
-const FIELD_COUNT: usize = 17;
+const FIELD_COUNT: usize = 18;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PaneState {
@@ -25,6 +27,7 @@ pub struct PaneState {
     pub cursor_visible: bool,
     pub scroll_region_upper: usize,
     pub scroll_region_lower: usize,
+    pub pane_width: usize,
 }
 
 impl PaneState {
@@ -60,6 +63,7 @@ impl PaneState {
             cursor_visible,
             scroll_region_upper,
             scroll_region_lower,
+            pane_width,
         ] = <[usize; FIELD_COUNT]>::try_from(fields).ok()?;
         Some(Self {
             cursor_x,
@@ -79,7 +83,15 @@ impl PaneState {
             cursor_visible: cursor_visible != 0,
             scroll_region_upper,
             scroll_region_lower,
+            pane_width,
         })
+    }
+
+    pub fn size(&self) -> PaneSize {
+        PaneSize {
+            columns: self.pane_width,
+            rows: self.pane_height,
+        }
     }
 }
 

@@ -440,6 +440,10 @@ pub struct TerminalModel {
     /// the model stays in a single executing block and ignores shell integration hooks.
     is_raw: bool,
 
+    /// The grid's rows and columns when its backend sets them (a tmux pane's size), so view
+    /// resizes leave them alone.
+    backend_grid_size: Option<(usize, usize)>,
+
     // This session's startup directory path. If None, the startup directory is treated as default
     // (the user's home directory).
     session_startup_path: Option<PathBuf>,
@@ -1106,6 +1110,7 @@ impl TerminalModel {
             pending_session_info: None,
             ignore_bootstrapping_messages: false,
             is_raw: false,
+            backend_grid_size: None,
             session_startup_path,
             is_receiving_in_band_command_output: IsReceivingInBandCommandOutput::No,
             #[cfg(windows)]
@@ -1517,6 +1522,15 @@ impl TerminalModel {
 
     pub fn is_raw(&self) -> bool {
         self.is_raw
+    }
+
+    /// Sizes the grid to `rows` by `columns` from now on, whatever size the view is.
+    pub fn set_backend_grid_size(&mut self, rows: usize, columns: usize) {
+        self.backend_grid_size = Some((rows, columns));
+        let size = *self.block_list.size();
+        if (size.rows(), size.columns()) != (rows, columns) {
+            self.resize(SizeUpdate::refresh(size));
+        }
     }
 
     /// Reacts to the PTY going away. For a shared ambient agent session with shell respawn
@@ -2140,6 +2154,10 @@ impl TerminalModel {
     /// Resize terminal to new dimensions.
     /// The block sort direction is needed to update the state of the find dialog.
     pub fn resize(&mut self, size_update: SizeUpdate) {
+        let size_update = match self.backend_grid_size {
+            Some((rows, columns)) => size_update.with_grid(*self.block_list.size(), rows, columns),
+            None => size_update,
+        };
         // Only resize the model on a pane size change or gap size change.  If it's just
         // the content height changing, we don't need to resize the model, and resizing
         // the model will actually clear the selection state, which we don't want to do.

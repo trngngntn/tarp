@@ -57,21 +57,27 @@ pub(super) async fn run_output(
     let mut unwrapper = PassthroughUnwrapper::new();
     let mut bytes = Vec::new();
     while let Ok(event) = events.recv().await {
-        let data = match event {
-            PaneEvent::Output(data) => Some(data),
-            PaneEvent::Restored(data) => {
+        let (data, size) = match event {
+            PaneEvent::Output(data) => (Some(data), None),
+            PaneEvent::Restored { bytes, size } => {
                 // A sequence cut off by a pause would otherwise swallow the redraw.
                 processor = Processor::default();
                 unwrapper = PassthroughUnwrapper::new();
-                Some(data)
+                (Some(bytes), Some(size))
             }
-            PaneEvent::Paused => None,
+            PaneEvent::Paused => (None, None),
         };
         if let Some(data) = data {
             bytes.clear();
             unwrapper.push(&data, &mut bytes);
+            let mut model = model.lock();
+            // tmux owns the pane's size; the restore redraws the content at it.
+            if let Some(size) = size {
+                model.set_backend_grid_size(size.rows, size.columns);
+            }
             // tmux is the pane's terminal and has already answered its queries.
-            processor.parse_bytes(&mut *model.lock(), &bytes, &mut io::sink());
+            processor.parse_bytes(&mut *model, &bytes, &mut io::sink());
+            drop(model);
             listener.send_wakeup_event();
         }
         if events.is_empty() {

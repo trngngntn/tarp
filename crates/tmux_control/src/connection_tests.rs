@@ -7,6 +7,10 @@ use crate::testing::{FakeTmux, recv_timeout};
 
 const W: Duration = Duration::from_millis(200);
 
+fn size(columns: usize, rows: usize) -> PaneSize {
+    PaneSize { columns, rows }
+}
+
 /// Bounded stand-in for `recv_blocking().is_err()`, so a regression fails instead of hanging.
 fn closes_within<T>(rx: &async_channel::Receiver<T>, wait: Duration) -> bool {
     let step = Duration::from_millis(1);
@@ -132,7 +136,7 @@ fn restore_is_one_line_and_delivers_restored_before_later_output() {
     tmux.send("%output %0 stale"); // dropped: it is already in the capture
     tmux.reply(&[]); // pause
     tmux.send("%pause %0"); // ignored while restoring
-    tmux.reply(&["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2"]); // state
+    tmux.reply(&["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2 30"]); // state
     tmux.reply(&["ignored"]); // history
     tmux.reply(&["ab", "cd", ""]); // visible
     tmux.reply(&[]); // saved normal
@@ -141,9 +145,10 @@ fn restore_is_one_line_and_delivers_restored_before_later_output() {
     tmux.send("%output %0 live");
     assert_eq!(
         recv_timeout(&rx, W),
-        Some(PaneEvent::Restored(
-            [RESET, b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"].concat()
-        ))
+        Some(PaneEvent::Restored {
+            bytes: [RESET, b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"].concat(),
+            size: size(30, 3),
+        })
     );
     assert_eq!(
         recv_timeout(&rx, W),
@@ -234,7 +239,7 @@ fn a_failed_restore_part_skips_the_rest_of_its_line_and_resumes_the_pane() {
     connection.restore_pane(PaneId(0));
     assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
     tmux.reply(&[]); // pause
-    tmux.reply(&["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2"]); // state
+    tmux.reply(&["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2 30"]); // state
     tmux.reply_error(&["boom"]); // history; tmux skips the rest of the line
     assert_eq!(tmux.read_command(), commands::continue_pane(PaneId(0)));
     let next = connection.command("x".into());
@@ -282,7 +287,7 @@ fn restore_while_restoring_is_ignored() {
     assert_eq!(tmux.try_read_command(W), None);
     for body in [
         &[][..],
-        &["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2"],
+        &["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2 30"],
         &[],
         &["ab", "cd", ""],
         &[],
@@ -292,9 +297,65 @@ fn restore_while_restoring_is_ignored() {
     }
     assert_eq!(
         recv_timeout(&rx, W),
-        Some(PaneEvent::Restored(
-            [RESET, b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"].concat()
-        ))
+        Some(PaneEvent::Restored {
+            bytes: [RESET, b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"].concat(),
+            size: size(30, 3),
+        })
     );
     assert_eq!(recv_timeout(&rx, W), None);
+}
+
+fn restored_size(rx: &async_channel::Receiver<PaneEvent>) -> Option<PaneSize> {
+    match recv_timeout(rx, W)? {
+        PaneEvent::Restored { size, .. } => Some(size),
+        PaneEvent::Output(_) | PaneEvent::Paused => None,
+    }
+}
+
+/// A subscribed pane of 30x3 with its first restore delivered.
+fn restored_pane() -> (FakeTmux, Connection, async_channel::Receiver<PaneEvent>) {
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let rx = connection.subscribe_pane(PaneId(0));
+    connection.restore_pane(PaneId(0));
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
+    tmux.reply_restore(size(30, 3), &["ab"]);
+    assert_eq!(restored_size(&rx), Some(size(30, 3)));
+    (tmux, connection, rx)
+}
+
+#[test]
+fn a_layout_change_resizing_a_restored_pane_restores_it_at_the_new_size() {
+    let (mut tmux, _connection, rx) = restored_pane();
+    tmux.send("%layout-change @0 b25e,30x3,0,0,0 b25e,30x3,0,0,0 *");
+    assert_eq!(tmux.try_read_command(W), None);
+    tmux.send("%layout-change @0 c1a7,40x5,0,0,0 c1a7,40x5,0,0,0 *");
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
+    tmux.reply_restore(size(40, 5), &["ab"]);
+    assert_eq!(restored_size(&rx), Some(size(40, 5)));
+}
+
+#[test]
+fn a_layout_change_leaves_an_unrestored_pane_alone() {
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let _rx = connection.subscribe_pane(PaneId(0));
+    tmux.send("%layout-change @0 c1a7,40x5,0,0,0 c1a7,40x5,0,0,0 *");
+    assert_eq!(tmux.try_read_command(W), None);
+}
+
+#[test]
+fn a_resize_during_a_restore_is_restored_again_unless_the_capture_has_it() {
+    let (mut tmux, connection, rx) = restored_pane();
+    connection.restore_pane(PaneId(0));
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
+    tmux.send("%layout-change @0 c1a7,40x5,0,0,0 c1a7,40x5,0,0,0 *");
+    // Captured before tmux applied the resize.
+    tmux.reply_restore(size(30, 3), &["ab"]);
+    assert_eq!(restored_size(&rx), Some(size(30, 3)));
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
+    tmux.send("%layout-change @0 d2b8,50x6,0,0,0 d2b8,50x6,0,0,0 *");
+    tmux.reply_restore(size(50, 6), &["ab"]);
+    assert_eq!(restored_size(&rx), Some(size(50, 6)));
+    assert_eq!(tmux.try_read_command(W), None);
 }

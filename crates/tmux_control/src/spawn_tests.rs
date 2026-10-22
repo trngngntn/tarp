@@ -8,6 +8,7 @@ use crate::connection::{
     Connection, ConnectionConfig, ConnectionError, ConnectionEvent, PaneEvent, SpawnConfig,
 };
 use crate::ids::{PaneId, WindowId};
+use crate::layout::PaneSize;
 use crate::parser::Notification;
 use crate::restore::RESET;
 use crate::testing::recv_timeout;
@@ -16,6 +17,10 @@ use crate::{commands, tmux_binary};
 const SECS: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const POLL_STEPS: u32 = 200;
+
+fn size(columns: usize, rows: usize) -> PaneSize {
+    PaneSize { columns, rows }
+}
 
 /// A private tmux server, killed on drop.
 struct PrivateServer {
@@ -164,9 +169,10 @@ fn restore_reproduces_screen_and_cursor() {
     connection.restore_pane(PaneId(0));
     assert_eq!(
         recv_timeout(&rx, SECS),
-        Some(PaneEvent::Restored(
-            [RESET, b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"].concat()
-        ))
+        Some(PaneEvent::Restored {
+            bytes: [RESET, b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"].concat(),
+            size: size(20, 3),
+        })
     );
 }
 
@@ -217,7 +223,7 @@ fn restore_then_live_output_has_no_duplicate_lines() {
     let mut live_chunks = 0;
     while live_chunks < LIVE_CHUNKS {
         match recv_timeout(&rx, Duration::from_secs(3)) {
-            Some(PaneEvent::Restored(bytes)) => restored = Some(bytes),
+            Some(PaneEvent::Restored { bytes, .. }) => restored = Some(bytes),
             Some(PaneEvent::Output(bytes)) if restored.is_some() => {
                 live.extend(bytes);
                 live_chunks += 1;
@@ -232,4 +238,22 @@ fn restore_then_live_output_has_no_duplicate_lines() {
     assert!(!restored.is_empty() && !live.is_empty());
     let all: Vec<_> = restored.iter().chain(&live).collect();
     assert!(all.windows(2).all(|pair| pair[0] < pair[1]), "{all:?}");
+}
+
+#[test]
+fn resizing_a_window_restores_its_pane_at_the_new_size() {
+    let Some(server) = PrivateServer::start("resize", 20, 3, "printf 'ab'; sleep 30", "ab") else {
+        return;
+    };
+    let (connection, _events) = server.attach();
+    let rx = connection.subscribe_pane(PaneId(0));
+    connection.resize_window(WindowId(0), 20, 3);
+    connection.restore_pane(PaneId(0));
+    let mut restored = std::iter::from_fn(|| recv_timeout(&rx, SECS)).filter_map(|event| match event {
+        PaneEvent::Restored { size, .. } => Some(size),
+        PaneEvent::Output(_) | PaneEvent::Paused => None,
+    });
+    assert_eq!(restored.next(), Some(size(20, 3)));
+    connection.resize_window(WindowId(0), 30, 4);
+    assert_eq!(restored.next(), Some(size(30, 4)));
 }

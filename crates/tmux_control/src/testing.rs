@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crate::commands;
 use crate::connection::{Connection, ConnectionConfig, ConnectionEvent, version_supported};
+use crate::layout::PaneSize;
 
 const READ_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(1);
@@ -84,6 +85,19 @@ impl FakeTmux {
             self.send(line);
         }
         self.send(&format!("{end} 1 {number} 1"));
+    }
+
+    /// Answers a `commands::restore_pane` line for a pane of `size` showing `visible`.
+    pub fn reply_restore(&mut self, size: PaneSize, visible: &[&str]) {
+        let state = format!(
+            "0 0 0 0 0 0 {} 0 0 0 0 0 0 0 1 0 {} {}",
+            size.rows,
+            size.rows - 1,
+            size.columns
+        );
+        for body in [&[][..], &[state.as_str()], &[], visible, &[], &[]] {
+            self.reply(body);
+        }
     }
 
     /// Attaches the client to `session`, reporting `version`, and leaves `Ready` unread.

@@ -1,5 +1,6 @@
 mod binary;
 pub mod ids;
+pub mod layout;
 pub mod output;
 
 pub use binary::tmux_binary;

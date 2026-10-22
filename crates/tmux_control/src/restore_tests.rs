@@ -1,6 +1,6 @@
 use super::*;
 
-const NORMAL_STATE: &[u8] = b"2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2";
+const NORMAL_STATE: &[u8] = b"2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2 5";
 
 /// Every restore starts from the normal screen with default modes, whatever the terminal showed.
 const RESET: &[u8] = b"\x1b[?1049l\x1b[0m\x1b[r\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\
@@ -18,7 +18,7 @@ fn state_format_and_parse() {
         #{alternate_saved_y} #{history_size} #{pane_height} #{bracket_paste_flag} \
         #{keypad_cursor_flag} #{keypad_flag} #{mouse_standard_flag} #{mouse_button_flag} \
         #{mouse_any_flag} #{mouse_sgr_flag} #{cursor_flag} #{scroll_region_upper} \
-        #{scroll_region_lower}"
+        #{scroll_region_lower} #{pane_width}"
     );
     let state = PaneState::parse(NORMAL_STATE).unwrap();
     assert_eq!(
@@ -30,9 +30,16 @@ fn state_format_and_parse() {
         ),
         (2, 1, 3, true)
     );
+    assert_eq!(
+        state.size(),
+        PaneSize {
+            columns: 5,
+            rows: 3
+        }
+    );
     // An unknown format (older tmux) expands to empty and reads as 0/false.
     assert!(
-        !PaneState::parse(b"2 1 0 0 0 0 3  0 0 0 0 0 0 1 0 2")
+        !PaneState::parse(b"2 1 0 0 0 0 3  0 0 0 0 0 0 1 0 2 5")
             .unwrap()
             .bracketed_paste
     );
@@ -56,7 +63,7 @@ fn normal_screen_restore() {
 #[test]
 fn alternate_screen_restore() {
     let capture = PaneCapture {
-        state: PaneState::parse(b"3 0 1 2 2 1 3 0 0 0 0 0 0 0 1 0 2").unwrap(),
+        state: PaneState::parse(b"3 0 1 2 2 1 3 0 0 0 0 0 0 0 1 0 2 5").unwrap(),
         history: vec![b"n1".to_vec()],
         visible: vec![b"ALT".to_vec(), b"".to_vec(), b"".to_vec()],
         saved_normal: vec![b"n2".to_vec(), b"n3".to_vec(), b"n4".to_vec()],
@@ -70,7 +77,7 @@ fn alternate_screen_restore() {
 #[test]
 fn modes_and_scroll_region_are_restored() {
     let capture = PaneCapture {
-        state: PaneState::parse(b"0 0 0 0 0 0 3 1 0 0 0 0 1 1 0 1 2").unwrap(),
+        state: PaneState::parse(b"0 0 0 0 0 0 3 1 0 0 0 0 1 1 0 1 2 5").unwrap(),
         history: vec![],
         visible: vec![b"".to_vec(); 3],
         saved_normal: vec![],

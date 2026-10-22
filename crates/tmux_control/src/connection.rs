@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 
 use crate::commands;
 use crate::ids::{PaneId, SessionId, WindowId};
+use crate::layout::{PaneSize, pane_sizes};
 use crate::parser::{CommandReply, ControlEvent, ControlParser, Notification};
 use crate::queue::CommandQueue;
 use crate::restore::{PaneCapture, PaneState, restore_bytes};
@@ -71,8 +72,8 @@ pub enum ConnectionError {
 #[derive(Debug, PartialEq)]
 pub enum PaneEvent {
     Output(Vec<u8>),
-    /// Bytes that redraw the pane from scratch; output after it continues from there.
-    Restored(Vec<u8>),
+    /// Bytes that redraw the pane from scratch at `size`; output after it continues from there.
+    Restored { bytes: Vec<u8>, size: PaneSize },
     /// tmux stopped sending output; call `Connection::resume_if_paused` once caught up.
     Paused,
 }
@@ -171,12 +172,16 @@ enum PaneMode {
         capture: PaneCapture,
         /// Set when a part was unreadable; the rest of the line still runs but delivers nothing.
         failed: bool,
+        /// The pane's size from a layout change during the restore, which the capture may predate.
+        resized_to: Option<PaneSize>,
     },
 }
 
 struct PaneRoute {
     sender: async_channel::Sender<PaneEvent>,
     mode: PaneMode,
+    /// The size of the last restore delivered.
+    size: Option<PaneSize>,
 }
 
 impl PaneRoute {
@@ -193,8 +198,21 @@ impl PaneRoute {
                 saved_normal: Vec::new(),
             },
             failed: false,
+            resized_to: None,
         };
         true
+    }
+
+    /// Restores the pane when tmux resized it, since tmux doesn't resend a resized pane's content.
+    fn on_resize(&mut self, pane: PaneId, size: PaneSize, writer: &mpsc::Sender<WriterMsg>) {
+        match &mut self.mode {
+            PaneMode::Live { .. } => {
+                if self.size.is_some_and(|known| known != size) && self.begin_restore() {
+                    let _ = writer.send(restore_line(pane));
+                }
+            }
+            PaneMode::Restoring { resized_to, .. } => *resized_to = Some(size),
+        }
     }
 
     /// Pauses the pane in tmux when the subscriber falls behind; it catches up with a restore.
@@ -340,6 +358,7 @@ impl Connection {
             let route = PaneRoute {
                 sender,
                 mode: PaneMode::Live { paused: false },
+                size: None,
             };
             shared.panes.insert(pane, route);
         }
@@ -394,14 +413,24 @@ impl Connection {
     }
 
     fn queue_restore(&self, pane: PaneId) {
-        let tags = RESTORE_PARTS.map(|part| Tag::Restore { pane, part }).into();
-        self.queue(commands::restore_pane(pane), tags);
+        self.send(restore_line(pane));
     }
 
     fn queue(&self, line: String, tags: Vec<Tag>) {
-        if let Err(mpsc::SendError(msg)) = self.writer.send(WriterMsg::Line { line, tags }) {
+        self.send(WriterMsg::Line { line, tags });
+    }
+
+    fn send(&self, msg: WriterMsg) {
+        if let Err(mpsc::SendError(msg)) = self.writer.send(msg) {
             fail(msg.into_tags());
         }
+    }
+}
+
+fn restore_line(pane: PaneId) -> WriterMsg {
+    WriterMsg::Line {
+        line: commands::restore_pane(pane),
+        tags: RESTORE_PARTS.map(|part| Tag::Restore { pane, part }).into(),
     }
 }
 
@@ -619,7 +648,12 @@ impl ReaderThread {
         let Some(route) = shared.panes.get_mut(&pane) else {
             return;
         };
-        let PaneMode::Restoring { capture, failed } = &mut route.mode else {
+        let PaneMode::Restoring {
+            capture,
+            failed,
+            resized_to,
+        } = &mut route.mode
+        else {
             return;
         };
         if !reply.success {
@@ -650,10 +684,19 @@ impl ReaderThread {
             RestorePart::Visible => capture.visible = reply.body,
             RestorePart::SavedNormal => capture.saved_normal = reply.body,
             RestorePart::Continue => {
-                let restored = (!*failed).then(|| restore_bytes(capture));
+                let size = capture.state.size();
+                let restored = (!*failed).then(|| PaneEvent::Restored {
+                    bytes: restore_bytes(capture),
+                    size,
+                });
+                let stale = resized_to.is_some_and(|resized_to| resized_to != size);
                 route.mode = PaneMode::Live { paused: false };
                 if let Some(restored) = restored {
-                    route.deliver(pane, PaneEvent::Restored(restored), &self.writer);
+                    route.size = Some(size);
+                    route.deliver(pane, restored, &self.writer);
+                }
+                if stale && route.begin_restore() {
+                    let _ = self.writer.send(restore_line(pane));
                 }
             }
         }
@@ -679,6 +722,20 @@ impl ReaderThread {
                 }
             }
             Notification::Continue(_) => {}
+            Notification::LayoutChange { window, layout } => {
+                {
+                    let mut shared = self.shared.lock();
+                    for (pane, size) in pane_sizes(&layout).unwrap_or_default() {
+                        if let Some(route) = shared.panes.get_mut(&pane) {
+                            route.on_resize(pane, size, &self.writer);
+                        }
+                    }
+                }
+                self.emit(ConnectionEvent::Notification(Notification::LayoutChange {
+                    window,
+                    layout,
+                }));
+            }
             Notification::Exit { reason } => self.exit_reason = reason,
             Notification::SessionChanged { session, name } if !self.ready => {
                 self.session = Some((session, name));
