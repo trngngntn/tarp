@@ -260,3 +260,26 @@ fn a_layout_change_resizes_the_grid_and_restores_the_pane() {
     assert_eq!(grid_size(&model), size(120, 40));
     assert_eq!(model.block_list().active_block().output_to_string(), "cd");
 }
+
+#[test]
+fn a_restore_carries_the_panes_bracketed_paste_mode() {
+    let (_tmux, model, _listener, binding, _pane_rx) = fixture(true);
+    let restore = |bracketed_paste: &str| {
+        let state = format!("0 0 0 0 0 0 10 {bracketed_paste} 0 0 0 0 0 0 1 0 9 7");
+        let capture = PaneCapture {
+            state: PaneState::parse(state.as_bytes()).unwrap(),
+            history: vec![],
+            visible: vec![b"$ ".to_vec()],
+            saved_normal: vec![],
+        };
+        PaneEvent::Restored {
+            bytes: restore_bytes(&capture),
+            size: capture.state.size(),
+        }
+    };
+    run_output_over(&model, binding.clone(), [restore("1")]);
+    assert!(model.lock().needs_bracketed_paste());
+    // A restore clears a mode the pane no longer has.
+    run_output_over(&model, binding, [restore("0")]);
+    assert!(!model.lock().needs_bracketed_paste());
+}
