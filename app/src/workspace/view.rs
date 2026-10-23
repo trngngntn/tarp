@@ -1241,9 +1241,12 @@ pub struct Workspace {
     /// The sidebar order as last agreed with tmux (`tab_grouping::tmux_layout`).
     tmux_layout: tab_grouping::TmuxLayoutState,
     /// The tab (pane group) showing each tmux window attached in control mode. An entry may
-    /// outlive its tab, e.g. one the user closed.
+    /// outlive its tab, e.g. one closed without detaching its panes.
     #[cfg(not(target_family = "wasm"))]
     tmux_window_tabs: HashMap<(TmuxSessionKey, TmuxWindowId), EntityId>,
+    /// The reverse of `tmux_window_tabs`.
+    #[cfg(not(target_family = "wasm"))]
+    tmux_tab_windows: HashMap<EntityId, (TmuxSessionKey, TmuxWindowId)>,
     /// tmux tabs created in the background and not shown since.
     #[cfg(not(target_family = "wasm"))]
     unshown_tmux_tabs: HashSet<EntityId>,
@@ -3699,6 +3702,8 @@ impl Workspace {
             tmux_layout: Default::default(),
             #[cfg(not(target_family = "wasm"))]
             tmux_window_tabs: HashMap::new(),
+            #[cfg(not(target_family = "wasm"))]
+            tmux_tab_windows: HashMap::new(),
             #[cfg(not(target_family = "wasm"))]
             unshown_tmux_tabs: HashSet::new(),
             #[cfg(not(target_family = "wasm"))]
@@ -12185,6 +12190,11 @@ impl Workspace {
         false
     }
 
+    #[cfg(target_family = "wasm")]
+    fn forget_tmux_tab(&mut self, _pane_group_id: EntityId) -> bool {
+        false
+    }
+
     pub fn snapshot(
         &self,
         window_id: WindowId,
@@ -12680,7 +12690,7 @@ impl Workspace {
             self.prune_empty_tab_group(group_id, ctx);
         }
 
-        if detach_panes_for_close && self.is_tmux_window_tab(removed_pane_group_id) {
+        if detach_panes_for_close && self.forget_tmux_tab(removed_pane_group_id) {
             // tmux keeps the window and re-attaching shows it again, so there is nothing to undo.
             // Released now, the pane can't later cut off a tab that re-attached it.
             tab_data

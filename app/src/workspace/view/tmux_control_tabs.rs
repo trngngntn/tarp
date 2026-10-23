@@ -128,7 +128,7 @@ impl Workspace {
                 if let Some(index) = self.tmux_window_tab_index(*key, *window) {
                     self.close_tab(index, true, false, ctx);
                 }
-                self.tmux_window_tabs.remove(&(*key, *window));
+                self.forget_tmux_window(*key, *window);
             }
             TmuxControlEvent::WindowRenamed { key, window, name } => {
                 if let Some(index) = self.tmux_window_tab_index(*key, *window) {
@@ -157,7 +157,7 @@ impl Workspace {
                     if let Some(index) = self.tmux_window_tab_index(*key, window) {
                         self.close_tab(index, true, false, ctx);
                     }
-                    self.tmux_window_tabs.remove(&(*key, window));
+                    self.forget_tmux_window(*key, window);
                 }
             }
             TmuxControlEvent::AttachFailed {
@@ -178,8 +178,9 @@ impl Workspace {
     /// close doesn't bring them back; re-attaching does.
     pub(super) fn release_tmux_tabs(&mut self, ctx: &mut ViewContext<Self>) {
         self.unshown_tmux_tabs.clear();
+        self.tmux_window_tabs.clear();
         let tmux_tabs: HashSet<EntityId> =
-            self.tmux_window_tabs.drain().map(|(_, id)| id).collect();
+            self.tmux_tab_windows.drain().map(|(id, _)| id).collect();
         let pane_groups: Vec<_> = self
             .tabs
             .iter()
@@ -230,9 +231,22 @@ impl Workspace {
     }
 
     pub(super) fn is_tmux_window_tab(&self, pane_group_id: EntityId) -> bool {
-        self.tmux_window_tabs
-            .values()
-            .any(|id| *id == pane_group_id)
+        self.tmux_tab_windows.contains_key(&pane_group_id)
+    }
+
+    /// Returns whether `pane_group_id` showed a tmux window.
+    pub(super) fn forget_tmux_tab(&mut self, pane_group_id: EntityId) -> bool {
+        let Some(window) = self.tmux_tab_windows.remove(&pane_group_id) else {
+            return false;
+        };
+        self.tmux_window_tabs.remove(&window);
+        true
+    }
+
+    fn forget_tmux_window(&mut self, key: TmuxSessionKey, window: TmuxWindowId) {
+        if let Some(pane_group_id) = self.tmux_window_tabs.remove(&(key, window)) {
+            self.tmux_tab_windows.remove(&pane_group_id);
+        }
     }
 
     /// Restores a tmux tab created in the background the first time it is shown. A resize to an
@@ -300,8 +314,14 @@ impl Workspace {
             self.active_tab_index += 1;
         }
         self.tab_mru_order.push(pane_group_id);
-        self.tmux_window_tabs
-            .insert((key, window.window), pane_group_id);
+        if let Some(stale) = self
+            .tmux_window_tabs
+            .insert((key, window.window), pane_group_id)
+        {
+            self.tmux_tab_windows.remove(&stale);
+        }
+        self.tmux_tab_windows
+            .insert(pane_group_id, (key, window.window));
         if activate {
             self.activate_tab_internal(index, ctx);
         } else {

@@ -6453,6 +6453,26 @@ mod tmux_control_tabs {
     }
 
     #[test]
+    fn test_tmux_closing_a_tab_forgets_its_window() {
+        let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
+        let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
+        App::test((), |mut app| async move {
+            initialize_app(&mut app);
+            let workspace = mock_workspace(&mut app);
+            let (_tmux, connection, _events) = fake_tmux();
+            workspace.update(&mut app, |workspace, ctx| {
+                let event = attached(ZSH_AND_CLAUDE, &connection, workspace.window_id);
+                workspace.handle_tmux_control_event(&event, ctx);
+                let closed = workspace.tabs[1].pane_group.id();
+                workspace.close_tab(1, true, false, ctx);
+                assert!(!workspace.is_tmux_window_tab(closed));
+                assert!(workspace.is_tmux_window_tab(workspace.tabs[1].pane_group.id()));
+                assert_eq!(workspace.tmux_window_tabs.len(), 1);
+            });
+        });
+    }
+
+    #[test]
     fn reattach_reopens_closed_windows_without_duplicates() {
         let _grouped_tabs = FeatureFlag::GroupedTabs.override_enabled(true);
         let _control_mode = FeatureFlag::TmuxControlMode.override_enabled(true);
