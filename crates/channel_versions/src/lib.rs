@@ -140,10 +140,6 @@ pub struct VersionInfo {
     /// The version to use for TUI downloads, falling back to `version` if not set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tui_version: Option<String>,
-    /// Where to download this version's installer, for update sources that name it directly
-    /// (Harp's GitHub releases) rather than through a release-assets directory.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub download_url: Option<String>,
 }
 
 impl VersionInfo {
@@ -157,7 +153,6 @@ impl VersionInfo {
             is_rollback: None,
             cli_version: None,
             tui_version: None,
-            download_url: None,
         }
     }
 

@@ -71,5 +71,5 @@ __pycache__/
 .note/
 .claude/scheduled_tasks.lock
 
-# Harp release output (script/release_macos)
+# Tarp release output (script/release_macos)
 /dist/

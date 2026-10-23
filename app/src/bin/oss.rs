@@ -4,27 +4,20 @@
 
 use anyhow::Result;
 use warp_core::AppId;
-use warp_core::channel::{
-    AutoupdateConfig, Channel, ChannelConfig, ChannelState, OzConfig, WarpServerConfig,
-};
+use warp_core::channel::{Channel, ChannelConfig, ChannelState, OzConfig, WarpServerConfig};
 
 // Simple wrapper around warp::run() for Warp OSS builds.
 fn main() -> Result<()> {
     let mut state = ChannelState::new(
         Channel::Oss,
         ChannelConfig {
-            app_id: AppId::new("com", "dominikmartn", "Harp"),
-            logfile_name: "harp.log".into(),
+            app_id: AppId::new("com", "trngngntn", "Tarp"),
+            logfile_name: "tarp.log".into(),
             server_config: WarpServerConfig::production(),
             oz_config: OzConfig::production(),
             telemetry_config: None,
             crash_reporting_config: None,
-            // Harp's updater reads GitHub releases (see autoupdate::mac); this turns on the
-            // update menu items that offer the restart.
-            autoupdate_config: Some(AutoupdateConfig {
-                releases_base_url: "https://github.com/dominikmartn/harp/releases".into(),
-                show_autoupdate_menu_items: true,
-            }),
+            autoupdate_config: None,
             mcp_static_config: None,
         },
     );
@@ -32,6 +25,7 @@ fn main() -> Result<()> {
         state = state.with_additional_features(warp_core::features::DEBUG_FLAGS);
     }
     ChannelState::set(state);
+    warp_core::paths::migrate_legacy_home_config_dir();
 
     warp::run()
 }
@@ -46,15 +40,15 @@ embed_plist::embed_info_plist_bytes!(r#"
     <key>CFBundleDevelopmentRegion</key>
     <string>English</string>
     <key>CFBundleDisplayName</key>
-    <string>Harp</string>
+    <string>Tarp</string>
     <key>CFBundleExecutable</key>
     <string>warp-oss</string>
     <key>CFBundleIdentifier</key>
-    <string>com.dominikmartn.Harp</string>
+    <string>com.trngngntn.Tarp</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Harp</string>
+    <string>Tarp</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -66,7 +60,7 @@ embed_plist::embed_info_plist_bytes!(r#"
     <key>UIDesignRequiresCompatibility</key>
     <true/>
     <key>CFBundleURLTypes</key>
-    <array><dict><key>CFBundleURLName</key><string>Custom App</string><key>CFBundleURLSchemes</key><array><string>harp</string></array></dict></array>
+    <array><dict><key>CFBundleURLName</key><string>Custom App</string><key>CFBundleURLSchemes</key><array><string>tarp</string></array></dict></array>
     <key>NSHumanReadableCopyright</key>
     <string>© 2026, Denver Technologies, Inc</string>
     </dict>

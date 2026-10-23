@@ -4,20 +4,20 @@ Version=1.0
 
 Type=Application
 
-Name=Harp
+Name=Tarp
 GenericName=TerminalEmulator
 
 Exec=warp-terminal-oss %U
-StartupWMClass=com.dominikmartn.Harp
+StartupWMClass=com.trngngntn.Tarp
 
 Keywords=shell;prompt;command;commandline;cmd;
 
-Icon=com.dominikmartn.Harp
+Icon=com.trngngntn.Tarp
 
 Categories=System;TerminalEmulator;
 
 # Don't run this application within a terminal.
 Terminal=false
 
-# Register ourselves as the handler for harp:// URLs.
-MimeType=x-scheme-handler/harp;
+# Register ourselves as the handler for tarp:// URLs.
+MimeType=x-scheme-handler/tarp;

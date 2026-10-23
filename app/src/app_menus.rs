@@ -245,7 +245,7 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
         None,
     )));
     menu_items.push(MenuItem::Standard(StandardAction::Quit));
-    // The fork shows its own name (Harp) in the app menu.
+    // The fork shows its own name (Tarp) in the app menu.
     Menu::new(app_display_name!(), menu_items)
 }
 

@@ -5,7 +5,7 @@ weekly limit used, the inner ring the share of the 5 hour window. The app never 
 numbers itself. Some other tool (a menu bar app, a cron job, a script) writes them to a local JSON
 file, and the sidebar re-reads that file about every 30 seconds when it changes.
 
-The integration is off by default. Turn it on in `~/.harp/settings.toml`:
+The integration is off by default. Turn it on in `~/.tarp/settings.toml`:
 
 ```toml
 [integrations.limit_rings]

@@ -37,7 +37,7 @@ fn base_warp_config_dir_name() -> String {
         // Preview shares the same directory as Stable for backward
         // compatibility — existing users already have config in `.warp`.
         Channel::Stable | Channel::Preview => WARP_CONFIG_DIR.to_owned(),
-        Channel::Oss => ".harp".to_owned(),
+        Channel::Oss => ".tarp".to_owned(),
         Channel::Dev => format!("{WARP_CONFIG_DIR}-dev"),
         Channel::Integration => format!("{WARP_CONFIG_DIR}-integration"),
         Channel::Local => format!("{WARP_CONFIG_DIR}-local"),
@@ -75,6 +75,62 @@ pub fn warp_home_mcp_config_file_path() -> Option<PathBuf> {
     warp_home_config_dir().map(|warp_config_dir| warp_config_dir.join(".mcp.json"))
 }
 
+/// Copies the pre-rebrand `~/.harp*` config directory to `~/.tarp*` the first time Tarp runs.
+///
+/// The old directory is never modified, and an existing `~/.tarp*` is never overwritten. Failures
+/// are logged and otherwise ignored.
+#[cfg(not(target_family = "wasm"))]
+pub fn migrate_legacy_home_config_dir() {
+    if ChannelState::channel() != Channel::Oss {
+        return;
+    }
+    let Some(home_dir) = dirs::home_dir() else {
+        return;
+    };
+    let dir_name = warp_home_config_dir_name();
+    let Some(profile_suffix) = dir_name.strip_prefix(".tarp") else {
+        return;
+    };
+    let source = home_dir.join(format!(".harp{profile_suffix}"));
+    let destination = home_dir.join(&dir_name);
+    if let Err(err) = copy_dir_if_absent(&source, &destination) {
+        log::error!(
+            "Failed to migrate {} to {}: {err}",
+            source.display(),
+            destination.display()
+        );
+    }
+}
+
+/// Recursively copies `source` to `destination`, unless `source` is not a directory or
+/// `destination` already exists. A partial copy is removed on failure so the next launch retries.
+#[cfg(not(target_family = "wasm"))]
+fn copy_dir_if_absent(source: &Path, destination: &Path) -> std::io::Result<()> {
+    if !source.is_dir() || destination.exists() {
+        return Ok(());
+    }
+    let result = copy_dir_recursive(source, destination);
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(destination);
+    }
+    result
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 /// Returns the macOS config directory name for the current channel and data
 /// profile.
 ///
@@ -101,7 +157,7 @@ fn macos_config_dir_name_for(channel: Channel, data_profile: Option<&str>) -> St
     let base_dir_name = match channel {
         Channel::Stable => WARP_CONFIG_DIR.to_owned(),
         Channel::Preview => format!("{WARP_CONFIG_DIR}-preview"),
-        Channel::Oss => ".harp".to_owned(),
+        Channel::Oss => ".tarp".to_owned(),
         Channel::Dev => format!("{WARP_CONFIG_DIR}-dev"),
         Channel::Integration => format!("{WARP_CONFIG_DIR}-integration"),
         Channel::Local => format!("{WARP_CONFIG_DIR}-local"),
@@ -132,11 +188,11 @@ pub fn data_dir() -> PathBuf {
 ///
 /// Most TUI channel binaries use the same application ID as the GUI. The OSS
 /// TUI is the exception: it uses `WarpTui`, while the corresponding GUI uses
-/// `com.dominikmartn.Harp` (Harp).
+/// `com.trngngntn.Tarp` (Tarp).
 #[cfg(any(not(target_os = "macos"), test))]
 fn gui_app_id_for_channel(channel: Channel, current_app_id: AppId) -> AppId {
     match channel {
-        Channel::Oss => AppId::new("com", "dominikmartn", "Harp"),
+        Channel::Oss => AppId::new("com", "trngngntn", "Tarp"),
         Channel::Stable
         | Channel::Preview
         | Channel::Dev
