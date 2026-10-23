@@ -2430,7 +2430,9 @@ fn raw_mode_ignores_shell_integration_hooks() {
     let before = model.block_list().active_block().id().clone();
 
     for hook in [
-        format!(r#"{{"hook": "Preexec", "value": {{"command": "ls", "session_id": {session_id}}}}}"#),
+        format!(
+            r#"{{"hook": "Preexec", "value": {{"command": "ls", "session_id": {session_id}}}}}"#
+        ),
         format!(
             r#"{{"hook": "CommandFinished", "value": {{"exit_code": 0, "next_block_id": "next", "session_id": {session_id}}}}}"#
         ),
