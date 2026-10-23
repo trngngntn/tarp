@@ -6232,10 +6232,11 @@ mod tmux_control_tabs {
     use tmux_control::{PaneId, SessionId, WindowId as TmuxWindowId};
 
     use super::*;
-    use crate::terminal::tmux_control::{TmuxControlEvent, TmuxSessionKey};
+    use crate::terminal::tmux_control::{TmuxControlEvent, TmuxServerId, TmuxSessionKey};
     use crate::workspace::cross_window_tab_drag::CrossWindowTabDrag;
 
     const KEY: TmuxSessionKey = TmuxSessionKey {
+        server: TmuxServerId(0),
         session: SessionId(0),
     };
 
@@ -6580,7 +6581,7 @@ mod tmux_control_tabs {
         let (mut tmux, connection, events) = fake_tmux();
         app.update(|ctx| {
             TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
-                sessions.attach_with_connection(connection, events, window_id, ctx)
+                sessions.attach_with_connection(connection, events, None, window_id, ctx)
             });
         });
         tmux.handshake("demo", "3.8");
@@ -6627,7 +6628,7 @@ mod tmux_control_tabs {
             let (mut second, connection, events) = fake_tmux();
             app.update(|ctx| {
                 TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
-                    sessions.attach_with_connection(connection, events, other, ctx)
+                    sessions.attach_with_connection(connection, events, None, other, ctx)
                 });
             });
             second.handshake("demo", "3.8");
@@ -6770,7 +6771,7 @@ mod tmux_control_tabs {
             let (mut second, connection, events) = fake_tmux();
             app.update(|ctx| {
                 TmuxControlSessions::handle(ctx).update(ctx, |sessions, ctx| {
-                    sessions.attach_with_connection(connection, events, WindowId::new(), ctx)
+                    sessions.attach_with_connection(connection, events, None, WindowId::new(), ctx)
                 });
             });
             second.handshake("demo", "3.8");

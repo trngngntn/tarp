@@ -12,7 +12,7 @@ use warp_terminal::model::grid::Dimensions as _;
 
 use super::*;
 use crate::terminal::event_listener::ChannelEventListener;
-use crate::terminal::tmux_control::TmuxSessionKey;
+use crate::terminal::tmux_control::{TmuxServerId, TmuxSessionKey};
 use crate::terminal::writeable_pty::Message;
 use crate::terminal::{SizeInfo, SizeUpdate, TerminalModel};
 
@@ -30,6 +30,7 @@ fn binding_for(connection: &Connection) -> TmuxPaneBinding {
     TmuxPaneBinding {
         connection: connection.clone(),
         key: TmuxSessionKey {
+            server: TmuxServerId(0),
             session: SessionId(0),
         },
         window: TmuxWindowId(0),

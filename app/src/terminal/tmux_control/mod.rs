@@ -2,7 +2,9 @@ mod event_loop;
 mod sessions;
 mod terminal_manager;
 
-pub use sessions::{AttachTarget, TmuxControlEvent, TmuxControlSessions, TmuxSessionKey};
+pub use sessions::{
+    AttachTarget, TmuxControlEvent, TmuxControlSessions, TmuxServerId, TmuxSessionKey,
+};
 use settings::Setting;
 pub use terminal_manager::{TmuxPaneBinding, TmuxTerminalManager};
 use warpui::{AppContext, SingletonEntity};

@@ -12,8 +12,14 @@ use warpui::{Entity, ModelContext, SingletonEntity, WindowId};
 /// Identifies one attached tmux session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TmuxSessionKey {
+    /// Session ids are only unique per server.
+    pub server: TmuxServerId,
     pub session: SessionId,
 }
+
+/// Identifies a tmux server by the socket (`-L`) it was reached through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TmuxServerId(pub(crate) u32);
 
 /// Where to attach; `None` fields let tmux choose.
 pub struct AttachTarget {
@@ -78,6 +84,7 @@ enum LinkState {
 /// One tmux connection, from spawn until it closes.
 struct Link {
     owner_window: WindowId,
+    server: TmuxServerId,
     state: LinkState,
 }
 
@@ -94,6 +101,8 @@ struct AttachedSession {
 pub struct TmuxControlSessions {
     links: HashMap<u64, Link>,
     sessions: HashMap<TmuxSessionKey, AttachedSession>,
+    /// Keyed by socket name; `None` is tmux's default server.
+    servers: HashMap<Option<String>, TmuxServerId>,
     next_link: u64,
     /// The tmux socket (`-L`) used when an attach names none; `None` is tmux's default server.
     default_socket_name: Option<String>,
@@ -110,17 +119,18 @@ impl TmuxControlSessions {
         owner_window: WindowId,
         ctx: &mut ModelContext<Self>,
     ) {
+        let socket_name = target
+            .socket_name
+            .or_else(|| self.default_socket_name.clone());
         let config = SpawnConfig {
             binary: tmux_binary().into(),
-            socket_name: target
-                .socket_name
-                .or_else(|| self.default_socket_name.clone()),
+            socket_name: socket_name.clone(),
             target: target.session,
             connection: ConnectionConfig::default(),
         };
         match Connection::spawn(config) {
             Ok((connection, events)) => {
-                self.attach_with_connection(connection, events, owner_window, ctx)
+                self.attach_with_connection(connection, events, socket_name, owner_window, ctx)
             }
             Err(err) => ctx.emit(TmuxControlEvent::AttachFailed {
                 owner_window,
@@ -172,15 +182,19 @@ impl TmuxControlSessions {
         &mut self,
         connection: Connection,
         events: async_channel::Receiver<ConnectionEvent>,
+        socket_name: Option<String>,
         owner_window: WindowId,
         ctx: &mut ModelContext<Self>,
     ) {
         let id = self.next_link;
         self.next_link += 1;
+        let next_server = TmuxServerId(self.servers.len() as u32);
+        let server = *self.servers.entry(socket_name).or_insert(next_server);
         self.links.insert(
             id,
             Link {
                 owner_window,
+                server,
                 state: LinkState::Pending {
                     failed: false,
                     notifications: Vec::new(),
@@ -207,7 +221,13 @@ impl TmuxControlSessions {
                 session_name,
                 ..
             } => {
-                let key = TmuxSessionKey { session };
+                let Some(link) = self.links.get(&id) else {
+                    return;
+                };
+                let key = TmuxSessionKey {
+                    server: link.server,
+                    session,
+                };
                 if self.sessions.contains_key(&key) {
                     self.supersede(id, connection, key, ctx);
                 } else {

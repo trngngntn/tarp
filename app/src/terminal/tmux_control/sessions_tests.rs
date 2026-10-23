@@ -11,6 +11,7 @@ use warpui::{App, AppContext, Element, Entity, ModelHandle, TypedActionView, Vie
 use super::*;
 
 const KEY: TmuxSessionKey = TmuxSessionKey {
+    server: TmuxServerId(0),
     session: SessionId(0),
 };
 const W: Duration = Duration::from_millis(200);
@@ -67,21 +68,17 @@ impl Fixture {
     }
 
     fn connect(&self, app: &mut App) -> (FakeTmux, Connection) {
-        let (tmux, connection, events) = FakeTmux::start(ConnectionConfig::default());
-        self.attach(app, &connection, events);
-        (tmux, connection)
+        self.connect_on(app, None)
     }
 
-    fn attach(
-        &self,
-        app: &mut App,
-        connection: &Connection,
-        events: async_channel::Receiver<ConnectionEvent>,
-    ) {
-        let (connection, owner) = (connection.clone(), self.owner);
+    fn connect_on(&self, app: &mut App, socket_name: Option<&str>) -> (FakeTmux, Connection) {
+        let (tmux, connection, events) = FakeTmux::start(ConnectionConfig::default());
+        let (attached, owner) = (connection.clone(), self.owner);
+        let socket_name = socket_name.map(str::to_owned);
         self.sessions.update(app, |sessions, ctx| {
-            sessions.attach_with_connection(connection, events, owner, ctx)
+            sessions.attach_with_connection(attached, events, socket_name, owner, ctx)
         });
+        (tmux, connection)
     }
 
     async fn next_event(&self) -> TmuxControlEvent {
@@ -363,5 +360,22 @@ fn windows_added_while_listing_are_not_lost() {
             TmuxControlEvent::WindowAdded { window, .. } if window == info(2, 2, "build")
         ));
         assert_eq!(tmux.try_read_command(W), None);
+    });
+}
+
+#[test]
+fn same_session_ids_on_different_servers_attach_separately() {
+    App::test((), |mut app| async move {
+        let fixture = Fixture::new(&mut app);
+        let (mut first, _first_connection) = fixture.attached(&mut app).await;
+        let (mut second, _second_connection) = fixture.connect_on(&mut app, Some("other"));
+        second.handshake("demo", "3.8");
+        assert_eq!(read_command(&mut second).await, commands::list_windows());
+        second.reply(&["@0 %0 zsh"]);
+        assert!(matches!(
+            fixture.next_event().await,
+            TmuxControlEvent::Attached { key, .. } if key != KEY
+        ));
+        assert_eq!(first.try_read_command(W), None);
     });
 }
