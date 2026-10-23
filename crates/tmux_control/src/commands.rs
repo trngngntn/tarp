@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use crate::ids::{PaneId, WindowId};
 use crate::restore::STATE_FORMAT;
 
@@ -30,8 +32,12 @@ pub fn send_keys(pane: PaneId, bytes: &[u8]) -> Vec<String> {
     bytes
         .chunks(SEND_KEYS_CHUNK)
         .map(|chunk| {
-            let hex: Vec<String> = chunk.iter().map(|byte| format!("{byte:02x}")).collect();
-            format!("send-keys -t {pane} -H {}", hex.join(" "))
+            let mut line = format!("send-keys -t {pane} -H");
+            line.reserve(chunk.len() * 3);
+            for byte in chunk {
+                let _ = write!(line, " {byte:02x}");
+            }
+            line
         })
         .collect()
 }
