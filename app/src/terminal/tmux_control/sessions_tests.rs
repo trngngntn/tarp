@@ -319,3 +319,20 @@ fn attaching_after_the_owner_window_closed_takes_the_session_over() {
         ));
     });
 }
+
+#[test]
+fn moving_to_another_session_detaches() {
+    App::test((), |mut app| async move {
+        let fixture = Fixture::new(&mut app);
+        let (mut tmux, _connection) = fixture.attached(&mut app).await;
+        tmux.send("%session-changed $1 other");
+        assert_eq!(read_command(&mut tmux).await, "detach-client");
+        assert!(matches!(
+            fixture.next_event().await,
+            TmuxControlEvent::Detached {
+                key: KEY,
+                reason: None
+            }
+        ));
+    });
+}

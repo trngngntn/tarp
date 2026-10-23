@@ -153,9 +153,14 @@ impl TmuxControlSessions {
             return;
         };
         if session.open_windows.remove(&window) && session.open_windows.is_empty() {
-            // Dropped now so a new attach doesn't reuse a connection that is going away.
+            self.detach(key, ctx);
+        }
+    }
+
+    fn detach(&mut self, key: TmuxSessionKey, ctx: &mut ModelContext<Self>) {
+        // Dropped now so a new attach doesn't reuse a connection that is going away.
+        if let Some(session) = self.sessions.remove(&key) {
             session.connection.detach();
-            self.sessions.remove(&key);
             ctx.emit(TmuxControlEvent::Detached { key, reason: None });
         }
     }
@@ -362,6 +367,10 @@ impl TmuxControlSessions {
             Notification::SessionRenamed { name, .. } => {
                 session.name = name.clone();
                 ctx.emit(TmuxControlEvent::SessionRenamed { key, name });
+            }
+            // Tabs stay keyed to the session they show, so moving the client ends it for them.
+            Notification::SessionChanged { session, .. } if session != key.session => {
+                self.detach(key, ctx);
             }
             Notification::Output { .. }
             | Notification::UnlinkedWindowAdd(_)
