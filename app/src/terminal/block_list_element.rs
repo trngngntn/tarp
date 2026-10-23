@@ -323,9 +323,7 @@ impl SnackbarHeader {
         params: &BlockGridParams,
         scroll_position: ScrollPosition,
     ) -> Option<SnackbarHeader> {
-        // A hidden-command-grid block (a tmux restore) has no command to pin, and a header would
-        // shift the grid rows the renderer paints.
-        if !snackbar_enabled || block.should_hide_command_grid() {
+        if !snackbar_enabled {
             self.clear_state();
             return None;
         }
@@ -3832,8 +3830,10 @@ impl Element for BlockListElement {
             if visible_idx == 0 {
                 if let VisibleItem::Block { block_index, .. } = block_entry {
                     if let Some(block) = model.block_list().block_at(*block_index) {
+                        // A raw (tmux) block has no command to pin, and a header would shift
+                        // the grid rows the renderer paints.
                         snackbar_header = self.snackbar_header_state().update(
-                            self.snackbar_header_state.snackbar_enabled,
+                            self.snackbar_header_state.snackbar_enabled && !model.is_raw(),
                             self.snackbar_header_state.show_snackbar,
                             block,
                             grid_origin,

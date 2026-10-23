@@ -42,12 +42,13 @@ fn params() -> BlockGridParams {
 }
 
 fn header_over(
+    model: &TerminalModel,
     block: &Block,
     grid_origin: Vector2F,
     params: &BlockGridParams,
 ) -> Option<SnackbarHeader> {
     SnackbarHeader::default().update(
-        true,
+        !model.is_raw(),
         true,
         block,
         grid_origin,
@@ -74,7 +75,7 @@ fn snackbar_is_not_pinned_over_a_restore_taller_than_the_viewport() {
     // Scrolled to the bottom of the block.
     let grid_origin = element_origin - vec2f(0., (grid_len - VIEWPORT_ROWS) as f32 * CELL_HEIGHT);
 
-    assert_eq!(header_over(block, grid_origin, &params), None);
+    assert_eq!(header_over(&model, block, grid_origin, &params), None);
     let painted = painted_rows(grid_origin, element_origin, &params, grid_len);
     for row in grid_len - VIEWPORT_ROWS..grid_len {
         assert!(
@@ -96,5 +97,27 @@ fn snackbar_is_pinned_over_a_scrolled_command_block() {
         .unwrap();
     let params = params();
     let grid_origin = params.bounds.origin() - vec2f(0., 5. * CELL_HEIGHT);
-    assert!(header_over(block, grid_origin, &params).is_some());
+    assert!(header_over(&model, block, grid_origin, &params).is_some());
+}
+
+#[test]
+fn snackbar_is_pinned_over_a_scrolled_block_with_a_hidden_command() {
+    let mut model = TerminalModel::mock(None, None);
+    model.simulate_block("ls", tall_output().as_str());
+    model
+        .block_list_mut()
+        .blocks_mut()
+        .iter_mut()
+        .find(|block| block.command_to_string() == "ls")
+        .unwrap()
+        .set_should_hide_command_grid(true);
+    let block = model
+        .block_list()
+        .blocks()
+        .iter()
+        .find(|block| block.command_to_string() == "ls")
+        .unwrap();
+    let params = params();
+    let grid_origin = params.bounds.origin() - vec2f(0., 5. * CELL_HEIGHT);
+    assert!(header_over(&model, block, grid_origin, &params).is_some());
 }
