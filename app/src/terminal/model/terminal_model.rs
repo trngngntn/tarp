@@ -2675,6 +2675,10 @@ impl ansi::Handler for TerminalModel {
         !self.shared_session_status().is_viewer()
     }
 
+    fn accepts_shell_hooks(&self) -> bool {
+        !self.is_raw
+    }
+
     fn set_title(&mut self, title: Option<String>) {
         // Don't set the tab title if the title event is for a running in-band command.
         if self.block_list().is_writing_or_executing_in_band_command() {
@@ -3068,9 +3072,6 @@ impl ansi::Handler for TerminalModel {
     }
 
     fn precmd_with_completion_metadata(&mut self, data: PrecmdValue) {
-        if self.is_raw {
-            return;
-        }
         let disposition = self
             .block_list
             .classify_next_block_id(&data.completion_metadata.next_block_id);
@@ -3110,9 +3111,6 @@ impl ansi::Handler for TerminalModel {
     }
 
     fn preexec(&mut self, data: PreexecValue) {
-        if self.is_raw {
-            return;
-        }
         let active_block = self.block_list.active_block();
         let observation = if active_block.state() == BlockState::Executing {
             if active_block.command_to_string() == data.command.as_str() {

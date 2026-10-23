@@ -247,6 +247,11 @@ pub trait Handler {
         true
     }
 
+    /// Returns whether Warp shell-integration hooks should be dispatched at all.
+    fn accepts_shell_hooks(&self) -> bool {
+        true
+    }
+
     /// Callback for the Warp CommandFinished hook.
     fn command_finished(&mut self, _data: CommandFinishedValue) {}
 

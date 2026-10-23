@@ -2425,18 +2425,27 @@ fn raw_mode_shows_output_in_an_executing_post_bootstrap_block() {
 #[test]
 fn raw_mode_ignores_shell_integration_hooks() {
     let mut model = TerminalModel::new_raw_for_test();
+    let session_id = 167303092612201;
+    model.register_session_id(SessionId::from(session_id));
     let before = model.block_list().active_block().id().clone();
-    model.precmd_with_completion_metadata(PrecmdValue {
-        completion_metadata: CompletionMetadata::default(),
-        prompt_metadata: PromptMetadata::default(),
-    });
-    assert_eq!(model.block_list().active_block().id(), &before);
-    model.preexec(PreexecValue {
-        command: "ls".to_owned(),
-        ..Default::default()
-    });
+
+    for hook in [
+        format!(r#"{{"hook": "Preexec", "value": {{"command": "ls", "session_id": {session_id}}}}}"#),
+        format!(
+            r#"{{"hook": "CommandFinished", "value": {{"exit_code": 0, "next_block_id": "next", "session_id": {session_id}}}}}"#
+        ),
+        format!(r#"{{"hook": "Precmd", "value": {{"pwd": "/tmp", "session_id": {session_id}}}}}"#),
+    ] {
+        model.process_bytes(hex_encoded_json_dcs(&hook).as_slice());
+    }
+    let mut rc_file_hook = b"\x1bP$f".to_vec();
+    rc_file_hook.extend(br#"{"hook": "SourcedRcFileForWarp", "value": {"shell": "zsh"}}"#);
+    rc_file_hook.push(0x9c);
+    model.process_bytes(rc_file_hook.as_slice());
+
     let block = model.block_list().active_block();
     assert_eq!(block.id(), &before);
     assert_eq!(block.command_to_string(), "");
     assert_eq!(block.state(), BlockState::Executing);
+    assert_eq!(model.did_receive_rc_file_dcs, None);
 }

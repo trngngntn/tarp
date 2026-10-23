@@ -552,9 +552,13 @@ impl<'a, H: Handler + 'a, W: io::Write> Performer<'a, H, W> {
         }
     }
 
-    /// Validates that a hook's session_id is recognized. Returns `true` if the
-    /// hook should be processed, `false` if it should be rejected.
-    fn validate_hook_session_id(&mut self, hook: &DProtoHook) -> bool {
+    /// Returns `true` if the hook should be processed: the handler accepts shell hooks and the
+    /// hook's session_id, when required, is recognized.
+    fn should_dispatch_hook(&mut self, hook: &DProtoHook) -> bool {
+        if !self.handler.accepts_shell_hooks() {
+            log::debug!("Ignored DCS hook '{}'", hook.name());
+            return false;
+        }
         if !hook.requires_registered_session()
             || !self.handler.should_validate_dcs_hook_session_id()
         {
@@ -584,7 +588,7 @@ impl<'a, H: Handler + 'a, W: io::Write> Performer<'a, H, W> {
     /// assumes that the hook was encoded originally.
     fn handle_decoded_hook(&mut self, hook: Result<DProtoHook, serde_json::Error>) {
         if let Ok(ref hook) = hook
-            && !self.validate_hook_session_id(hook)
+            && !self.should_dispatch_hook(hook)
         {
             return;
         }
@@ -635,7 +639,7 @@ impl<'a, H: Handler + 'a, W: io::Write> Performer<'a, H, W> {
         // that might otherwise corrupt parsing of the PTY output (the same can't be said for the
         // payloads of other DCS hooks).
         if let Ok(ref hook) = hook
-            && !self.validate_hook_session_id(hook)
+            && !self.should_dispatch_hook(hook)
         {
             return;
         }
