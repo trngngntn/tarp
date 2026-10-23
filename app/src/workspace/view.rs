@@ -21,6 +21,8 @@ mod tab_grouping;
 #[cfg(test)]
 #[path = "view_tests.rs"]
 pub(crate) mod tests;
+#[cfg(not(target_family = "wasm"))]
+mod tmux_control_tabs;
 mod vertical_tabs;
 #[cfg(target_family = "wasm")]
 mod wasm_view;
@@ -69,6 +71,8 @@ use repo_metadata::repositories::DetectedRepositories;
 use sentry::protocol::{Attachment, AttachmentType};
 use serde_json;
 use session_sharing_protocol::common::SessionId as SharedSessionId;
+#[cfg(not(target_family = "wasm"))]
+use tmux_control::WindowId as TmuxWindowId;
 #[cfg(target_family = "wasm")]
 use url::Url;
 use warp_cli::agent::Harness;
@@ -423,6 +427,8 @@ use crate::terminal::settings::{SpacingMode, TerminalSettings};
 use crate::terminal::shared_session::SharedSessionSource;
 use crate::terminal::shared_session::{IsSharedSessionCreator, SharedSessionActionSource};
 use crate::terminal::shell::ShellType;
+#[cfg(not(target_family = "wasm"))]
+use crate::terminal::tmux_control::{TmuxControlSessions, TmuxSessionKey};
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::terminal::view::ambient_agent::AmbientAgentViewModel as HandoffAmbientAgentViewModel;
 use crate::terminal::view::ambient_agent::{AuthSecretFtuxView, AuthSecretFtuxViewEvent};
@@ -1234,6 +1240,19 @@ pub struct Workspace {
     tmux_rename_settle: HashMap<EntityId, tab_grouping::TmuxRenameSettle>,
     /// The sidebar order as last agreed with tmux (`tab_grouping::tmux_layout`).
     tmux_layout: tab_grouping::TmuxLayoutState,
+    /// The tab (pane group) showing each tmux window attached in control mode. An entry may
+    /// outlive its tab, e.g. one closed without detaching its panes.
+    #[cfg(not(target_family = "wasm"))]
+    tmux_window_tabs: HashMap<(TmuxSessionKey, TmuxWindowId), EntityId>,
+    /// The reverse of `tmux_window_tabs`.
+    #[cfg(not(target_family = "wasm"))]
+    tmux_tab_windows: HashMap<EntityId, (TmuxSessionKey, TmuxWindowId)>,
+    /// tmux tabs created in the background and not shown since.
+    #[cfg(not(target_family = "wasm"))]
+    unshown_tmux_tabs: HashSet<EntityId>,
+    /// tmux tabs released as the window closed, which undoing the close must not bring back.
+    #[cfg(not(target_family = "wasm"))]
+    released_tmux_tabs: HashSet<EntityId>,
     left_panel_view: ViewHandle<LeftPanelView>,
     left_panel_views: Vec<ToolPanelView>,
     right_panel_view: ViewHandle<RightPanelView>,
@@ -3340,6 +3359,10 @@ impl Workspace {
         ctx.subscribe_to_model(&CLIAgentSessionsModel::handle(ctx), |me, _, event, ctx| {
             me.handle_cli_agent_sessions_event(event, ctx);
         });
+        #[cfg(not(target_family = "wasm"))]
+        ctx.subscribe_to_model(&TmuxControlSessions::handle(ctx), |me, _, event, ctx| {
+            me.handle_tmux_control_event(event, ctx);
+        });
 
         ctx.subscribe_to_model(
             &AgentNotificationsModel::handle(ctx),
@@ -3677,6 +3700,14 @@ impl Workspace {
             is_group_being_dragged: false,
             tmux_rename_settle: HashMap::new(),
             tmux_layout: Default::default(),
+            #[cfg(not(target_family = "wasm"))]
+            tmux_window_tabs: HashMap::new(),
+            #[cfg(not(target_family = "wasm"))]
+            tmux_tab_windows: HashMap::new(),
+            #[cfg(not(target_family = "wasm"))]
+            unshown_tmux_tabs: HashSet::new(),
+            #[cfg(not(target_family = "wasm"))]
+            released_tmux_tabs: HashSet::new(),
             left_panel_view,
             left_panel_views,
             right_panel_view,
@@ -4012,6 +4043,8 @@ impl Workspace {
             // The next tmux poll (every 10 s) reads the new values.
             TabSettingsChangedEvent::TmuxSyncEnabled { .. }
             | TabSettingsChangedEvent::TmuxSessionScript { .. } => {}
+            // Read when an attach is requested.
+            TabSettingsChangedEvent::TmuxControlMode { .. } => {}
             TabSettingsChangedEvent::UseVerticalTabs { .. } => {
                 let vertical_tabs_enabled = *TabSettings::as_ref(ctx).use_vertical_tabs;
                 // During HOA onboarding, keep the vertical tabs panel open
@@ -5781,6 +5814,8 @@ impl Workspace {
             let pane_group_id = tab.pane_group.id();
             self.tab_mru_order.retain(|id| *id != pane_group_id);
             self.tab_mru_order.insert(0, pane_group_id);
+            #[cfg(not(target_family = "wasm"))]
+            self.restore_tmux_tab_on_first_show(pane_group_id, ctx);
         }
         if self.vertical_tabs_panel_open
             && FeatureFlag::VerticalTabs.is_enabled()
@@ -12150,6 +12185,16 @@ impl Workspace {
         });
     }
 
+    #[cfg(target_family = "wasm")]
+    fn is_tmux_window_tab(&self, _pane_group_id: EntityId) -> bool {
+        false
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn forget_tmux_tab(&mut self, _pane_group_id: EntityId) -> bool {
+        false
+    }
+
     pub fn snapshot(
         &self,
         window_id: WindowId,
@@ -12188,10 +12233,11 @@ impl Workspace {
         } else {
             None
         };
-        let tabs: Vec<TabSnapshot> = self
+        let (kept_tab_indices, tabs): (Vec<usize>, Vec<TabSnapshot>) = self
             .tab_views()
             .enumerate()
             .filter(|(tab_index, _)| Some(*tab_index) != transferred_tab_index)
+            .filter(|(_, pane_group_view)| !self.is_tmux_window_tab(pane_group_view.id()))
             .map(|(tab_index, pane_group_view)| {
                 let resizable_data = ResizableData::handle(app);
                 let modal_sizes = resizable_data.as_ref(app).get_all_handles(window_id);
@@ -12216,7 +12262,7 @@ impl Workspace {
                     self.compute_left_panel_snapshot(pane_group_view, left_panel_width, app);
                 let right_panel =
                     self.compute_right_panel_snapshot(pane_group_view, right_panel_width, app);
-                TabSnapshot {
+                let tab = TabSnapshot {
                     root,
                     custom_title: pane_group.custom_title(app),
                     default_directory_color: self
@@ -12239,9 +12285,10 @@ impl Workspace {
                     // enabled.
                     pinned: FeatureFlag::PinnedTabs.is_enabled()
                         && self.tabs.get(tab_index).is_some_and(|tab| tab.pinned),
-                }
+                };
+                (tab_index, tab)
             })
-            .filter(|tab| {
+            .filter(|(_, tab)| {
                 // Filter out any tab that contains a single, read-only session.
                 !matches!(
                     tab.root,
@@ -12254,7 +12301,13 @@ impl Workspace {
                     })
                 )
             })
-            .collect();
+            .unzip();
+        // The skipped tabs shift the rest, and the active one may be among them.
+        let active_tab_index = kept_tab_indices
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, tab_index)| tab_index.abs_diff(active_tab_index))
+            .map_or(0, |(snapshot_index, _)| snapshot_index);
 
         // Skip orphan groups whose members were all filtered out above.
         // This is a safety net and ensures empty groups are not saved/restored.
@@ -12637,9 +12690,15 @@ impl Workspace {
             self.prune_empty_tab_group(group_id, ctx);
         }
 
-        // Re-adopted child tabs leave no useful tab contents to restore; the
-        // live pane already moved back.
-        if add_to_undo_stack && !re_adopted {
+        if detach_panes_for_close && self.forget_tmux_tab(removed_pane_group_id) {
+            // tmux keeps the window and re-attaching shows it again, so there is nothing to undo.
+            // Released now, the pane can't later cut off a tab that re-attached it.
+            tab_data
+                .pane_group
+                .update(ctx, |pane_group, ctx| pane_group.clean_up_panes(ctx));
+        } else if add_to_undo_stack && !re_adopted {
+            // Re-adopted child tabs leave no useful tab contents to restore; the
+            // live pane already moved back.
             let handle = ctx.handle();
             UndoCloseStack::handle(ctx).update(ctx, |stack, ctx| {
                 log::info!("storing data for closed tab");
@@ -12945,6 +13004,8 @@ impl Workspace {
 
     /// Update this workspace when it is reopened after being closed.
     pub fn handle_reopen(&mut self, ctx: &mut ViewContext<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        self.drop_released_tmux_tabs(ctx);
         self.sync_window_button_visibility(ctx);
         for pane_group in self.tab_views() {
             pane_group.update(ctx, |pane_group, ctx| {
@@ -23908,6 +23969,10 @@ impl Workspace {
             context.set.insert(flags::WARP_SAME_LINE_PROMPT_FLAG);
         }
 
+        if *tab_settings.tmux_control_mode.value() {
+            context.set.insert(flags::TMUX_CONTROL_MODE_CONTEXT_FLAG);
+        }
+
         if *ssh_settings.reuse_existing_control_master.value() {
             context
                 .set
@@ -25885,6 +25950,17 @@ impl Workspace {
                     ctx
                 );
                 ctx.notify();
+            }
+            ToggleTmuxControlMode => {
+                TabSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    let new_value = !*settings.tmux_control_mode.value();
+                    report_if_error!(settings.tmux_control_mode.set_value(new_value, ctx));
+                });
+                ctx.notify();
+            }
+            AttachTmuxSession => {
+                #[cfg(not(target_family = "wasm"))]
+                self.attach_tmux_session(ctx);
             }
             ToggleAgentManagementView => {
                 if AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
@@ -29033,6 +29109,8 @@ impl View for Workspace {
                     pane_group.detach_panes(ctx);
                 });
             }
+            #[cfg(not(target_family = "wasm"))]
+            self.release_tmux_tabs(ctx);
         }
 
         let window_id = ctx.window_id();
@@ -29059,9 +29137,12 @@ impl View for Workspace {
 // ---- Tab drag: local reordering, cross-window initiation, drop handling ----
 impl Workspace {
     /// Builds a `TransferredTab` snapshot for the tab at `index`, or `None`
-    /// if the index is out of bounds.
+    /// if the index is out of bounds or the tab shows a tmux window.
     fn tab_transfer_info_at_index(&self, index: usize, ctx: &AppContext) -> Option<TransferredTab> {
-        let tab = self.tabs.get(index)?;
+        let tab = self
+            .tabs
+            .get(index)
+            .filter(|tab| !self.is_tmux_window_tab(tab.pane_group.id()))?;
         let pane_group = tab.pane_group.clone();
         let color = tab.color();
         let draggable_state = tab.draggable_state.clone();
@@ -29685,7 +29766,10 @@ impl Workspace {
         }
 
         let source_is_single_tab = self.tabs.len() == 1;
+        // A tmux tab stays in the window that attached its session.
+        let is_tmux_tab = self.is_tmux_window_tab(self.tabs[current_index].pane_group.id());
         if (is_drag_outside_tab_bar || source_is_single_tab)
+            && !is_tmux_tab
             && FeatureFlag::DragTabsToWindows.is_enabled()
         {
             let source_was_single_tab = source_is_single_tab;

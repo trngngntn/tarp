@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - Minimum tmux: **3.4**. Tarp probes `display-message -p '#{version}'` before anything else and refuses lower versions with: `tmux <found> is too old; Tarp needs tmux 3.4 or newer`.
-- Transport: `<tmux_binary()> -C attach [-t <target>]` over plain pipes (no tty), started with `TMUX` and `TMUX_PANE` removed from its environment. Tests add `-L <socket> -f /dev/null` before `-C`.
+- Transport: `<tmux_binary()> -C attach [-t <target>]` over plain pipes (no tty), started with `TMUX` and `TMUX_PANE` removed from its environment. Tests reach their private server through `SpawnConfig.socket_name` (`-L`); `-f /dev/null` goes only on the test's `new-session`, because the attaching client reads no config.
 - Writes are held until the first server `%begin … %end` block. Every command line ends with `\n`. A `#` in a format must sit inside single quotes. Pane-target arguments of `refresh-client -A` must be quoted (`'%3:pause'`): unquoted, tmux 3.8 answers `parse error: syntax error`.
 - Replies pair to commands FIFO. A `%begin` whose flags bit 0 (`flags & 1`) is clear comes from the server and pops nothing. A block closes only on `%end`/`%error` lines with the same time, number and flags.
 - Reply bodies are raw bytes. Only `%output`/`%extended-output` data is octal-escaped: bytes `< 0x20` and `\` become `\ooo`.
@@ -163,7 +163,7 @@ fn doubled_inner_terminator_is_undoubled() {
 - [ ] **Step 5: Run the tests to verify they pass**
 
   Run: `cargo nextest run -p tmux_control`
-  Expected: `6 tests run: 6 passed`.
+  Expected: `7 tests run: 7 passed`.
 
 - [ ] **Step 6: Commit**
 
@@ -188,7 +188,7 @@ git commit -m "Add tmux_control crate: ids, %output unescape, passthrough unwrap
 **Interfaces:**
 - Consumes: `PaneId`, `WindowId`, `SessionId` and `output::unescape_output` (Task 1).
 - Produces:
-  - `pub enum ControlEvent { Notification(Notification), Reply(CommandReply) }`.
+  - `#[derive(Clone, Debug, PartialEq)] pub enum ControlEvent { Notification(Notification), Reply(CommandReply) }`.
   - `#[derive(Clone, Debug, PartialEq)] pub struct CommandReply { pub time: u64, pub number: u64, pub from_client: bool, pub success: bool, pub body: Vec<Vec<u8>> }`.
   - `#[derive(Clone, Debug, PartialEq)] pub enum Notification` with these variants:
     - `Output { pane: PaneId, data: Vec<u8> }` (from both `%output` and `%extended-output`; data already unescaped),
@@ -290,7 +290,7 @@ git commit -m "Add tmux_control crate: ids, %output unescape, passthrough unwrap
 - [ ] **Step 2: Write the failing tests**
 
   `parser_tests.rs` uses two helpers:
-  - `fn parse(fixture: &[u8]) -> Vec<ControlEvent>` splits on `\n`, feeds `push_line` and collects the `Some`s.
+  - `fn parse(fixture: &[u8]) -> Vec<ControlEvent>` strips the final `\n`, splits the rest on `\n` (the fixtures carry no indentation), feeds `push_line` and collects the `Some`s.
   - `fn ok(time, number, from_client, body: &[&[u8]]) -> ControlEvent` builds a successful `ControlEvent::Reply`.
 
 ```rust
@@ -324,20 +324,39 @@ fn session_events_transcript() {
 
 #[test]
 fn extended_output_transcript() {
-    // Expected events, in order:
-    //   ok(315, server), SessionChanged{$0,"demo"}, ok(317), ok(318), WindowAdd(@1),
-    //   Output { pane: %0, data: b"h\xc3\xa9\\\r\n\x1bPtmux;\x1b\x1b]777;notify;warp://cli-agent;{\"x\":1}\x07\x1b\\" },
-    //   WindowRenamed{@0,"zsh"}, WindowClose(@1), Exit{None}
+    use Notification::*;
+    let n = ControlEvent::Notification;
+    assert_eq!(parse(include_bytes!("testdata/extended_output.txt")), vec![
+        ok(1792572885, 315, false, &[]),
+        n(SessionChanged { session: SessionId(0), name: "demo".into() }),
+        ok(1792572886, 317, true, &[]),
+        ok(1792572886, 318, true, &[]),
+        n(WindowAdd(WindowId(1))),
+        n(Output { pane: PaneId(0),
+            data: b"h\xc3\xa9\\\r\n\x1bPtmux;\x1b\x1b]777;notify;warp://cli-agent;{\"x\":1}\x07\x1b\\".to_vec() }),
+        n(WindowRenamed { window: WindowId(0), name: "zsh".into() }),
+        n(WindowClose(WindowId(1))),
+        n(Exit { reason: None }),
+    ]);
 }
 
 #[test]
 fn capture_reply_transcript() {
-    // Reply bodies are raw and keep empty lines:
-    //   317 → [b"ab", b"cd", b""],
-    //   318 → [b""],
-    //   319 → [b"2 1 0"],
-    //   321 → [b"30 4"].
-    // Notifications in between: WindowRenamed{@0,"sleep"}, LayoutChange{@0,"e9dd,30x4,0,0,0"}, then Exit{None}.
+    use Notification::*;
+    let n = ControlEvent::Notification;
+    // Reply bodies are raw and keep empty lines.
+    assert_eq!(parse(include_bytes!("testdata/capture_reply.txt")), vec![
+        ok(1792572957, 315, false, &[]),
+        n(SessionChanged { session: SessionId(0), name: "demo".into() }),
+        ok(1792572957, 317, true, &[&b"ab"[..], b"cd", b""]),
+        ok(1792572957, 318, true, &[&b""[..]]),
+        ok(1792572957, 319, true, &[&b"2 1 0"[..]]),
+        n(WindowRenamed { window: WindowId(0), name: "sleep".into() }),
+        ok(1792572958, 320, true, &[]),
+        n(LayoutChange { window: WindowId(0), layout: "e9dd,30x4,0,0,0".into() }),
+        ok(1792572958, 321, true, &[&b"30 4"[..]]),
+        n(Exit { reason: None }),
+    ]);
 }
 
 #[test]
@@ -642,7 +661,8 @@ git commit -m "Build tmux commands and rebuild a pane's screen from captures"
   - `pub type CommandResult = Result<Vec<Vec<u8>>, CommandError>`.
   - `#[derive(Clone, Debug, PartialEq, thiserror::Error)] pub enum CommandError { #[error("{0}")] Tmux(String), #[error("tmux connection closed")] Disconnected }`.
   - Methods on `Connection`:
-    - `from_io(reader: impl Read + Send + 'static, writer: impl Write + Send + 'static, config: ConnectionConfig) -> (Connection, async_channel::Receiver<ConnectionEvent>)`
+    - `pub(crate) fn start(reader: impl Read + Send + 'static, writer: impl Write + Send + 'static, stderr: Option<Box<dyn Read + Send>>, config: ConnectionConfig) -> (Connection, async_channel::Receiver<ConnectionEvent>)`; `stderr` is the source of the `Closed` reason when tmux sends no `%exit` reason (Task 5 passes it)
+    - `from_io(reader: impl Read + Send + 'static, writer: impl Write + Send + 'static, config: ConnectionConfig) -> (Connection, async_channel::Receiver<ConnectionEvent>)`, which calls `start` with `stderr: None`
     - `command(&self, line: String) -> async_channel::Receiver<CommandResult>`
     - `subscribe_pane(&self, pane: PaneId) -> async_channel::Receiver<PaneEvent>`
     - `unsubscribe_pane(&self, pane: PaneId)`
@@ -656,11 +676,14 @@ git commit -m "Build tmux commands and rebuild a pane's screen from captures"
     - `FakeTmux::send(&mut self, line: &str)`,
     - `FakeTmux::read_command(&mut self) -> String` (panics after 5 s),
     - `FakeTmux::try_read_command(&mut self, wait: Duration) -> Option<String>`,
+    - `FakeTmux::close(&mut self)`: drops the fake's writer, so the client sees EOF,
     - `FakeTmux::reply(&mut self, body: &[&str])` and `FakeTmux::reply_error(&mut self, body: &[&str])` (client-flagged blocks with increasing numbers),
     - `FakeTmux::handshake(&mut self, session: &str, version: &str)`: sends the server block and `%session-changed $0 <session>`, answers the version query and, when the version is accepted, the pause-after command,
     - `recv_timeout<T>(rx: &async_channel::Receiver<T>, wait: Duration) -> Option<T>`.
 
 - [ ] **Step 1: Write the failing tests** (`connection_tests.rs`; `W = Duration::from_millis(200)`)
+
+  `handshake` leaves the `Ready` event unread in `events`.
 
 ```rust
 #[test]
@@ -684,97 +707,150 @@ fn nothing_is_written_before_the_first_block_and_app_commands_wait_for_the_probe
 
 #[test]
 fn refuses_tmux_older_than_3_4() {
-    // handshake("demo", "3.3a"):
-    //   event Failed(VersionTooOld { found: "3.3a" }),
-    //   next command "detach-client",
-    //   a command queued earlier is never written (try_read_command(W) == None after that).
+    let (mut tmux, connection, events) = FakeTmux::start(ConnectionConfig::default());
+    let _queued = connection.command(commands::list_windows());
+    tmux.handshake("demo", "3.3a");
+    assert!(matches!(recv_timeout(&events, W),
+        Some(ConnectionEvent::Failed(ConnectionError::VersionTooOld { found })) if found == "3.3a"));
+    assert_eq!(tmux.read_command(), "detach-client");
+    assert_eq!(tmux.try_read_command(W), None);
 }
 
 #[test]
 fn unparseable_version_is_accepted() {
-    // handshake("demo", "openbsd-7.5") → Ready { version: "openbsd-7.5", .. }
+    let (mut tmux, _connection, events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "openbsd-7.5");
+    assert!(matches!(recv_timeout(&events, W),
+        Some(ConnectionEvent::Ready { version, .. }) if version == "openbsd-7.5"));
 }
 
 #[test]
 fn attach_refused_when_the_first_block_is_an_error() {
-    // send "%begin 1 315 0", "can't find session: nope", "%error 1 315 0", "%exit", then close the pipe:
-    //   events: Failed(AttachRefused("can't find session: nope")), then Closed { reason: None };
-    //   nothing is written.
+    let (mut tmux, _connection, events) = FakeTmux::start(ConnectionConfig::default());
+    for line in ["%begin 1 315 0", "can't find session: nope", "%error 1 315 0", "%exit"] {
+        tmux.send(line);
+    }
+    tmux.close();
+    assert!(matches!(recv_timeout(&events, W),
+        Some(ConnectionEvent::Failed(ConnectionError::AttachRefused(m))) if m == "can't find session: nope"));
+    assert!(matches!(recv_timeout(&events, W), Some(ConnectionEvent::Closed { reason: None })));
+    assert_eq!(tmux.try_read_command(W), None);
 }
 
 #[test]
 fn replies_resolve_in_order_and_errors_carry_the_tmux_message() {
-    // After the handshake:
-    //   a = command("a"), b = command("bogus-command");
-    //   the fake sends a server block "%begin 5 400 0"/"%end 5 400 0", then reply(&["one"]), then
-    //   reply_error(&["parse error: unknown command: bogus-command"]).
-    //   a → Ok([b"one"]);
-    //   b → Err(CommandError::Tmux("parse error: unknown command: bogus-command")).
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let (a, b) = (connection.command("a".into()), connection.command("bogus-command".into()));
+    assert_eq!((tmux.read_command(), tmux.read_command()), ("a".into(), "bogus-command".into()));
+    tmux.send("%begin 5 400 0");
+    tmux.send("%end 5 400 0");
+    tmux.reply(&["one"]);
+    tmux.reply_error(&["parse error: unknown command: bogus-command"]);
+    assert_eq!(recv_timeout(&a, W), Some(Ok(vec![b"one".to_vec()])));
+    assert_eq!(recv_timeout(&b, W),
+        Some(Err(CommandError::Tmux("parse error: unknown command: bogus-command".into()))));
 }
 
 #[test]
 fn pane_output_is_unescaped_and_routed_to_its_subscriber() {
-    // After the handshake, subscribe %3.
-    //   send "%output %3 a\\033[1mb" → rx gets Output(b"a\x1b[1mb");
-    //   send "%output %4 x" (no subscriber) → dropped, nothing breaks.
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let rx = connection.subscribe_pane(PaneId(3));
+    tmux.send(r"%output %3 a\033[1mb");
+    assert_eq!(recv_timeout(&rx, W), Some(PaneEvent::Output(b"a\x1b[1mb".to_vec())));
+    tmux.send("%output %4 x"); // no subscriber: dropped
+    assert_eq!(recv_timeout(&rx, W), None);
 }
 
 #[test]
 fn restore_is_one_line_and_delivers_restored_before_later_output() {
-    // After the handshake: rx = subscribe_pane(%0); restore_pane(%0).
-    //   read_command() == commands::restore_pane(PaneId(0)).
-    //   The fake sends:
-    //     "%output %0 stale"                                     (dropped)
-    //     reply(&[])                                             (pause)
-    //     "%pause %0"                                            (ignored while restoring)
-    //     reply(&["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2"])          (state)
-    //     reply(&["ignored"])                                    (history)
-    //     reply(&["ab", "cd", ""])                               (visible)
-    //     reply(&[])                                             (saved normal)
-    //     reply(&[])                                             (continue)
-    //     "%continue %0"
-    //     "%output %0 live"
-    //   rx yields exactly:
-    //     Restored(b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H"),
-    //     Output(b"live"),
-    //   and then nothing within W.
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let rx = connection.subscribe_pane(PaneId(0));
+    connection.restore_pane(PaneId(0));
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
+    tmux.send("%output %0 stale"); // dropped: it is already in the capture
+    tmux.reply(&[]); // pause
+    tmux.send("%pause %0"); // ignored while restoring
+    tmux.reply(&["2 1 0 0 0 0 3 0 0 0 0 0 0 0 1 0 2"]); // state
+    tmux.reply(&["ignored"]); // history
+    tmux.reply(&["ab", "cd", ""]); // visible
+    tmux.reply(&[]); // saved normal
+    tmux.reply(&[]); // continue
+    tmux.send("%continue %0");
+    tmux.send("%output %0 live");
+    assert_eq!(recv_timeout(&rx, W),
+        Some(PaneEvent::Restored(b"\x1b[H\x1b[2J\x1b[3Jab\r\ncd\r\n\x1b[2;3H".to_vec())));
+    assert_eq!(recv_timeout(&rx, W), Some(PaneEvent::Output(b"live".to_vec())));
+    assert_eq!(recv_timeout(&rx, W), None);
 }
 
 #[test]
 fn input_becomes_send_keys_chunks() {
-    // send_input(%3, &[b'a'; 1500]) → two commands, the first with 1000 " 61", the second with 500.
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    connection.send_input(PaneId(3), &[b'a'; 1500]);
+    assert_eq!(tmux.read_command().matches(" 61").count(), 1000);
+    assert_eq!(tmux.read_command().matches(" 61").count(), 500);
 }
 
 #[test]
 fn resize_is_refresh_client() {
-    // resize_window(@2, 120, 40) → "refresh-client -C @2:120x40"
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    connection.resize_window(WindowId(2), 120, 40);
+    assert_eq!(tmux.read_command(), "refresh-client -C @2:120x40");
 }
 
 #[test]
 fn a_full_pane_channel_pauses_the_pane_until_drained() {
-    // config.pane_channel_capacity = 2; after the handshake, subscribe %1.
-    //   Three "%output %1 x" lines → read_command() == "refresh-client -A '%1:pause'".
-    //   rx holds exactly 2 Output(b"x").
-    //   resume_if_paused(%1) == true and read_command() == restore_pane(%1).
-    //   A second resume_if_paused(%1) == false.
+    let (mut tmux, connection, _events) =
+        FakeTmux::start(ConnectionConfig { pane_channel_capacity: 2 });
+    tmux.handshake("demo", "3.8");
+    let rx = connection.subscribe_pane(PaneId(1));
+    for _ in 0..3 {
+        tmux.send("%output %1 x");
+    }
+    assert_eq!(tmux.read_command(), "refresh-client -A '%1:pause'");
+    assert_eq!(rx.len(), 2);
+    assert!(connection.resume_if_paused(PaneId(1)));
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(1)));
+    assert!(!connection.resume_if_paused(PaneId(1)));
 }
 
 #[test]
 fn tmux_pause_wakes_the_pane() {
-    // subscribe %1; send "%pause %1" → rx gets Paused; resume_if_paused(%1) == true.
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let rx = connection.subscribe_pane(PaneId(1));
+    tmux.send("%pause %1");
+    assert_eq!(recv_timeout(&rx, W), Some(PaneEvent::Paused));
+    assert!(connection.resume_if_paused(PaneId(1)));
 }
 
 #[test]
 fn eof_fails_pending_commands_and_reports_the_exit_reason() {
-    // After the handshake: r = command("x"); send "%exit detached"; close the pipe.
-    //   r → Err(CommandError::Disconnected);
-    //   events → Closed { reason: Some("detached") };
-    //   pane receivers are closed.
+    let (mut tmux, connection, events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let (pending, pane) = (connection.command("x".into()), connection.subscribe_pane(PaneId(1)));
+    assert_eq!(tmux.read_command(), "x");
+    tmux.send("%exit detached");
+    tmux.close();
+    assert_eq!(recv_timeout(&pending, W), Some(Err(CommandError::Disconnected)));
+    let closed = std::iter::from_fn(|| recv_timeout(&events, W))
+        .find(|event| matches!(event, ConnectionEvent::Closed { .. }));
+    assert!(matches!(closed, Some(ConnectionEvent::Closed { reason: Some(r) }) if r == "detached"));
+    assert!(pane.recv_blocking().is_err());
 }
 
 #[test]
 fn unsubscribe_closes_the_pane_receiver() {
-    // subscribe %1, unsubscribe %1 → rx.recv_blocking() is Err.
+    let (mut tmux, connection, _events) = FakeTmux::start(ConnectionConfig::default());
+    tmux.handshake("demo", "3.8");
+    let rx = connection.subscribe_pane(PaneId(1));
+    connection.unsubscribe_pane(PaneId(1));
+    assert!(rx.recv_blocking().is_err());
 }
 ```
 
@@ -815,7 +891,7 @@ fn unsubscribe_closes_the_pane_receiver() {
   - **EOF.**
     - Every queued `Reply` tag gets `Err(Disconnected)`.
     - Every pane sender is dropped.
-    - Emit `Closed { reason }`. The reason is the `%exit` reason, or else the trimmed text read from the optional stderr reader (Task 5), or `None`.
+    - Emit `Closed { reason }`. The reason is the `%exit` reason, or else the trimmed text read from `stderr` (when given), or `None`.
 
   Methods:
   - `restore_pane` marks the pane `Restoring` and then queues `restore_pane(pane)` with the six `Restore` tags.
@@ -842,13 +918,14 @@ git commit -m "Add tmux control Connection: gated writer, reply queue, per-pane 
 
 **Files:**
 - Create: `crates/tmux_control/src/binary.rs`
+- Modify: `crates/tmux_control/src/lib.rs` (`mod binary; pub use binary::tmux_binary;`)
 - Modify: `crates/tmux_control/src/connection.rs` (add `SpawnConfig`, `Connection::spawn`)
 - Test: `crates/tmux_control/src/spawn_tests.rs`
 - Modify: `app/src/workspace/view/tab_grouping.rs:1996-2001` (delete the private `tmux_binary`; `use tmux_control::tmux_binary;` inside `mod tmux_agents`)
 - Modify: `app/Cargo.toml` (`tmux_control.workspace = true` under `[target.'cfg(not(target_family = "wasm"))'.dependencies]` at line 304; `tmux_control = { workspace = true, features = ["test-util"] }` under the matching dev-dependencies at line 447)
 
 **Interfaces:**
-- Consumes: `Connection::from_io` internals (Task 4).
+- Consumes: `Connection::start` (Task 4), which takes the stderr reason source.
 - Produces:
   - `tmux_control::tmux_binary() -> &'static str`, moved verbatim: `/opt/homebrew/bin/tmux`, then `/usr/local/bin/tmux`, then `tmux`.
   - `pub struct SpawnConfig { pub binary: String, pub socket_name: Option<String>, pub target: Option<String>, pub connection: ConnectionConfig }`.
@@ -857,29 +934,35 @@ git commit -m "Add tmux control Connection: gated writer, reply queue, per-pane 
 - [ ] **Step 1: Write the failing tests**
 
   `spawn_tests.rs` has a helper, `struct PrivateServer { socket: String }`:
-  - `fn start(name: &str, width: u16, height: u16, command: &str) -> Option<PrivateServer>` runs `tmux -L tarp-test-<pid>-<name> -f /dev/null new-session -d -s demo -x W -y H <command>`. It returns `None` (after printing `skipping: tmux not installed`) when `tmux_binary() -V` fails.
+  - `fn start(name: &str, width: u16, height: u16, command: &str, ready_text: &str) -> Option<PrivateServer>` runs `tmux -L tarp-test-<pid>-<name> -f /dev/null new-session -d -s demo -x W -y H <command>`, then polls `capture-pane -p` until it contains `ready_text` (up to `SECS`), so the pane has printed before any test attaches. It returns `None` (after printing `skipping: tmux not installed`) when `tmux_binary() -V` fails.
   - `Drop` runs `kill-server`.
   - `fn attach(&self) -> (Connection, Receiver<ConnectionEvent>)` spawns with `target: Some("demo".into())` and waits for `Ready`.
+
+  `fn saw(events: &Receiver<ConnectionEvent>, pred: impl Fn(&ConnectionEvent) -> bool) -> bool` drains `events` for up to `SECS` and reports whether `pred` matched.
 
 ```rust
 #[test]
 fn attaches_and_follows_window_add_rename_and_close() {
-    let Some(server) = PrivateServer::start("windows", 40, 5, "sleep 30") else { return };
+    let Some(server) = PrivateServer::start("windows", 40, 5, "sleep 30", "") else { return };
     let (connection, events) = server.attach();
     let windows = recv_timeout(&connection.command(commands::list_windows()), SECS).unwrap().unwrap();
     assert_eq!(windows.len(), 1);
     assert!(windows[0].starts_with(b"@0 %0 "));
     recv_timeout(&connection.command("new-window -d -n second 'sleep 30'".into()), SECS);
-    // events within SECS include Notification(WindowAdd(WindowId(1)))
+    assert!(saw(&events, |e| matches!(e,
+        ConnectionEvent::Notification(Notification::WindowAdd(WindowId(1))))));
     recv_timeout(&connection.command("rename-window -t @1 third".into()), SECS);
-    // ... WindowRenamed { window: WindowId(1), name: "third" }
+    assert!(saw(&events, |e| matches!(e, ConnectionEvent::Notification(
+        Notification::WindowRenamed { window: WindowId(1), name }) if name == "third")));
     recv_timeout(&connection.command("kill-window -t @1".into()), SECS);
-    // ... WindowClose(WindowId(1))
+    assert!(saw(&events, |e| matches!(e,
+        ConnectionEvent::Notification(Notification::WindowClose(WindowId(1))))));
 }
 
 #[test]
 fn restore_reproduces_screen_and_cursor() {
-    let Some(server) = PrivateServer::start("restore", 20, 3, "printf 'ab\\ncd'; sleep 30") else { return };
+    let Some(server) =
+        PrivateServer::start("restore", 20, 3, "printf 'ab\\ncd'; sleep 30", "cd") else { return };
     let (connection, _events) = server.attach();
     let rx = connection.subscribe_pane(PaneId(0));
     connection.resize_window(WindowId(0), 20, 3);
@@ -890,22 +973,50 @@ fn restore_reproduces_screen_and_cursor() {
 
 #[test]
 fn input_reaches_the_pane() {
-    // The server runs "cat". Subscribe to %0, then send_input(%0, b"hi\r").
-    // Output events within SECS, concatenated, contain b"hi".
+    let Some(server) = PrivateServer::start("input", 40, 5, "cat", "") else { return };
+    let (connection, _events) = server.attach();
+    let rx = connection.subscribe_pane(PaneId(0));
+    connection.send_input(PaneId(0), b"hi\r");
+    let mut got = Vec::new();
+    while !got.windows(2).any(|pair| pair == b"hi") {
+        let Some(PaneEvent::Output(bytes)) = recv_timeout(&rx, SECS) else { break };
+        got.extend(bytes);
+    }
+    assert!(got.windows(2).any(|pair| pair == b"hi"));
 }
 
 #[test]
 fn attach_refused_reports_tmux_reason() {
-    // The server is started, but spawn uses target "nope".
-    // events: Failed(AttachRefused("can't find session: nope")).
+    let Some(server) = PrivateServer::start("refused", 40, 5, "sleep 30", "") else { return };
+    let (_connection, events) = Connection::spawn(SpawnConfig {
+        binary: tmux_binary().into(),
+        socket_name: Some(server.socket.clone()),
+        target: Some("nope".into()),
+        connection: ConnectionConfig::default(),
+    }).unwrap();
+    assert!(matches!(recv_timeout(&events, SECS),
+        Some(ConnectionEvent::Failed(ConnectionError::AttachRefused(m))) if m == "can't find session: nope"));
 }
 
 #[test]
 fn restore_then_live_output_has_no_duplicate_lines() {
-    // The server runs: "i=0; while [ $i -lt 3000 ]; do echo L$i; i=$((i+1)); done; sleep 30" at 40x5.
-    // Attach immediately: subscribe %0, resize 40x5, restore %0.
-    // Collect Restored and Output bytes for 3 s and split on '\n' after removing '\r' and escapes.
-    // The L<n> numbers seen are strictly increasing (no number appears twice).
+    let script = "i=0; while [ $i -lt 3000 ]; do echo L$i; i=$((i+1)); done; sleep 30";
+    let Some(server) = PrivateServer::start("dupes", 40, 5, script, "L0") else { return };
+    let (connection, _events) = server.attach();
+    let rx = connection.subscribe_pane(PaneId(0));
+    connection.resize_window(WindowId(0), 40, 5);
+    connection.restore_pane(PaneId(0));
+    let mut text = Vec::new();
+    while let Some(event) = recv_timeout(&rx, Duration::from_secs(3)) {
+        match event {
+            PaneEvent::Restored(bytes) | PaneEvent::Output(bytes) => text.extend(bytes),
+            PaneEvent::Paused => break,
+        }
+    }
+    // `l_numbers` drops '\r' and escape sequences, splits on '\n' and parses each `L<n>` line.
+    let numbers = l_numbers(&text);
+    assert!(numbers.len() > 1);
+    assert!(numbers.windows(2).all(|pair| pair[0] < pair[1]));
 }
 ```
 
@@ -921,7 +1032,7 @@ fn restore_then_live_output_has_no_duplicate_lines() {
   - `env_remove("TMUX")` and `env_remove("TMUX_PANE")`,
   - stdin, stdout and stderr all piped.
 
-  It hands stdout and stdin to the Task 4 core, along with stderr as the optional reason source. A reaper thread calls `child.wait()`. Spawn I/O errors map to `ConnectionError::Spawn(err.to_string())`.
+  It calls `Connection::start` with stdout, stdin and `Some(stderr)`. A reaper thread calls `child.wait()`. Spawn I/O errors map to `ConnectionError::Spawn(err.to_string())`.
 
 - [ ] **Step 4: Run the tests to verify they pass, and check that the old sync still builds**
 
@@ -941,6 +1052,8 @@ git commit -m "Spawn tmux -C attach over pipes; share tmux_binary with the old s
 
 **Files:**
 - Modify: `crates/warp_features/src/lib.rs` (enum `FeatureFlag` at line 8: add `TmuxControlMode` after `PinnedTabs`, line ~893; add to `DOGFOOD_FLAGS` at line 1031)
+- Create: `app/src/terminal/tmux_control/mod.rs` (`tmux_control_mode_enabled`)
+- Modify: `app/src/terminal/mod.rs` (declare `tmux_control` under `#[cfg(not(target_family = "wasm"))]`)
 - Modify: `app/Cargo.toml` (`tmux_control_mode = []` next to `pluggable_notifications = []` at line 818; add `"tmux_control_mode"` to `default` after `"pinned_tabs"`, line 672)
 - Modify: `app/src/features.rs:460` (`#[cfg(feature = "tmux_control_mode")] FeatureFlag::TmuxControlMode,` after `GroupedTabs`)
 - Modify: `app/src/workspace/tab_settings.rs:634` (new setting after `tmux_session_script`)
@@ -948,7 +1061,7 @@ git commit -m "Spawn tmux -C attach over pipes; share tmux_binary with the old s
 - Modify: `app/src/workspace/action.rs` (`WorkspaceAction::ToggleTmuxControlMode`; add to the `false` arm of `should_save_app_state_on_action`)
 - Modify: `app/src/workspace/mod.rs` (register the toggle pair after the tab-pinning bindings, ~line 1090)
 - Modify: `app/src/workspace/view.rs`:
-  - `add_toggle_setting_context_flags` (~23917),
+  - `add_toggle_setting_context_flags` (23848),
   - the `TabSettingsChangedEvent` match (~4013),
   - the action match in `handle_action` (24775).
 - Test: `app/src/workspace/view_tests.rs`
@@ -1099,8 +1212,9 @@ fn raw_mode_routes_keys_to_the_pty_and_hides_the_input_box() {
 // session_management_tests.rs
 #[test]
 fn running_summary_skips_raw_sessions() {
-    // Two SessionNavigationData with CommandContext::RunningCommand: one is_raw = true, one false.
-    // RunningSessionSummary::new(&sessions).long_running_cmds.len() == 1
+    // `navigation_data(is_raw)` builds a SessionNavigationData with CommandContext::RunningCommand.
+    let sessions = [navigation_data(true), navigation_data(false)];
+    assert_eq!(RunningSessionSummary::new(&sessions).long_running_cmds.len(), 1);
 }
 ```
 
@@ -1111,6 +1225,8 @@ fn running_summary_skips_raw_sessions() {
 
 - [ ] **Step 3: Implement**
 
+  - `terminal_model_tests.rs` imports `ansi::Handler` for `precmd_with_completion_metadata` and `preexec`.
+  - `session_management.rs` includes the tests file with `#[cfg(test)] #[path = "session_management_tests.rs"] mod tests;`.
   - `new_raw_for_test` builds with `TerminalModel::new(...)`, using the same arguments as `new_for_test` minus the fake bootstrap, then calls `enter_raw_mode()`.
   - In the view, OR `model.is_raw()` into `is_long_running`, `should_write_typed_chars_to_pty` and `write_to_pty_for_syncing_long_running_commands`.
   - `is_input_box_visible` returns `false` first when raw.
@@ -1137,7 +1253,9 @@ git commit -m "Add raw mode: a terminal model that skips bootstrap and passes in
 **Files:**
 - Create: `app/src/terminal/tmux_control/terminal_manager.rs`
 - Create: `app/src/terminal/tmux_control/event_loop.rs`
+- Create: `app/src/terminal/tmux_control/sessions.rs` (`TmuxSessionKey`, and a stub `TmuxControlSessions` with `Entity`/`SingletonEntity` and a no-op `release_window`; Task 9 replaces it)
 - Modify: `app/src/terminal/tmux_control/mod.rs` (`mod terminal_manager; mod event_loop; mod sessions;` and re-exports)
+- Modify: `app/src/terminal/remote_tty/terminal_manager.rs` (extract the shared setup from `create_model`, line 51, into `build_pty_backed_terminal`; `create_model` calls it)
 - Modify: `app/src/pane_group/mod.rs`:
   - new `new_for_tmux_window`, modelled on `new_for_shared_session_viewer` (3566),
   - new `set_custom_title` next to `set_title` (5253).
@@ -1148,10 +1266,11 @@ git commit -m "Add raw mode: a terminal model that skips bootstrap and passes in
   - from Task 4: `Connection`, `PaneEvent`, and `subscribe_pane` / `resize_window` / `restore_pane` / `send_input` / `resume_if_paused` / `unsubscribe_pane`;
   - from Task 1: `PassthroughUnwrapper`;
   - from Task 7: `TerminalModel::enter_raw_mode`;
-  - `TmuxControlSessions::release_window` (Task 9; until Task 9 lands, call a `todo`-free no-op stub with the same signature in `sessions.rs`).
-- Produces:
+  - `TmuxControlSessions::release_window` (Task 9; until then the `sessions.rs` stub has the same signature).
+- Produces. In the app, `use tmux_control::WindowId as TmuxWindowId;` everywhere, so it never clashes with `warpui::WindowId`:
+  - In `remote_tty/terminal_manager.rs`: `pub(in crate::terminal) struct PtyBackedTerminal<E> { pub model: Arc<FairMutex<TerminalModel>>, pub view: ViewHandle<TerminalView>, pub pty_controller: ModelHandle<PtyController>, pub event_loop: ModelHandle<E> }` and `pub(in crate::terminal) fn build_pty_backed_terminal<E>(resources: TerminalViewResources, initial_size: Vector2F, model_event_sender: Option<SyncSender<ModelEvent>>, window_id: WindowId, initial_input_config: Option<InputConfig>, raw: bool, ctx: &mut AppContext, start_event_loop: impl FnOnce(Arc<FairMutex<TerminalModel>>, ChannelEventListener, Receiver<Message>, SizeInfo, &mut AppContext) -> ModelHandle<E>) -> PtyBackedTerminal<E>`. It holds everything `create_model` did up to and including `wire_up_pty_controller_with_surface`; with `raw` it calls `model.enter_raw_mode()` right after `create_terminal_model`. Each backend wraps the result in its own manager struct.
   - `#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)] pub struct TmuxSessionKey { pub session: SessionId }`, in `sessions.rs`. Phase 3 adds a host field.
-  - `#[derive(Clone)] pub struct TmuxPaneBinding { pub connection: Connection, pub key: TmuxSessionKey, pub window: WindowId, pub pane: PaneId }`.
+  - `#[derive(Clone)] pub struct TmuxPaneBinding { pub connection: Connection, pub key: TmuxSessionKey, pub window: TmuxWindowId, pub pane: PaneId, pub visible: bool }`. `visible` is true for the tab that is activated when created.
   - `TmuxTerminalManager::create_model(binding: TmuxPaneBinding, resources: TerminalViewResources, initial_size: Vector2F, model_event_sender: Option<SyncSender<ModelEvent>>, window_id: WindowId, ctx: &mut AppContext) -> (ViewHandle<TerminalView>, ModelHandle<Box<dyn TerminalManager>>)`.
   - `PaneGroup::new_for_tmux_window(binding: TmuxPaneBinding, tips_completed: ModelHandle<TipsCompleted>, user_default_shell_unsupported_banner_model_handle: ModelHandle<BannerState>, server_api: Arc<ServerApi>, model_event_sender: Option<SyncSender<ModelEvent>>, ctx: &mut ViewContext<Self>) -> Self`.
   - `PaneGroup::set_custom_title(&mut self, title: Option<String>, ctx: &mut ViewContext<Self>)`. Unlike `set_title`, it does not refocus.
@@ -1160,33 +1279,74 @@ git commit -m "Add raw mode: a terminal model that skips bootstrap and passes in
 
 - [ ] **Step 1: Write the failing tests** (`event_loop_tests.rs`, driving the free functions with `FakeTmux` and `futures::executor::block_on`)
 
+  A `fixture(visible: bool)` helper returns a `FakeTmux` after `handshake("demo", "3.8")`, a `TerminalModel::new_raw_for_test()` in `Arc<FairMutex<_>>`, a `ChannelEventListener`, and a `TmuxPaneBinding` for key `$0`, window `@0`, pane `%0`, with a pane receiver from `subscribe_pane`. `raw_model()`, `listener()` and `binding_for(&Connection)` are its parts, usable on their own. `W = Duration::from_millis(200)`.
+
 ```rust
 #[test]
 fn restored_and_live_output_reach_the_model_unwrapped() {
-    // model = TerminalModel::new_raw_for_test(); events = bounded(8);
-    // send Restored(b"\x1b[H\x1b[2J\x1b[3Jab"), Output(b"\x1bPtmux;\x1b\x1b]0;t\x07\x1b\\cd"), then close.
-    // After block_on(run_output(..)): the active block's output_to_string() == "abcd",
-    // and terminal_title() == Some("t").
+    let (_tmux, model, listener, binding, pane_rx) = fixture(true);
+    let (tx, rx) = async_channel::bounded(8);
+    tx.try_send(PaneEvent::Restored(b"\x1b[H\x1b[2J\x1b[3Jab".to_vec())).unwrap();
+    tx.try_send(PaneEvent::Output(b"\x1bPtmux;\x1b\x1b]0;t\x07\x1b\\cd".to_vec())).unwrap();
+    tx.close();
+    block_on(run_output(model.clone(), listener, binding, rx));
+    let model = model.lock();
+    assert_eq!(model.block_list().active_block().output_to_string(), "abcd");
+    assert_eq!(model.terminal_title(), Some("t"));
+}
+
+#[test]
+fn a_restore_discards_a_wrapper_cut_off_by_a_pause() {
+    let (_tmux, model, listener, binding, _pane_rx) = fixture(true);
+    let (tx, rx) = async_channel::bounded(8);
+    tx.try_send(PaneEvent::Output(b"\x1bPtmux;\x1b\x1b]0;x".to_vec())).unwrap();
+    tx.try_send(PaneEvent::Restored(b"ab".to_vec())).unwrap();
+    tx.close();
+    block_on(run_output(model.clone(), listener, binding, rx));
+    assert_eq!(model.lock().block_list().active_block().output_to_string(), "ab");
 }
 
 #[test]
 fn output_queries_are_not_answered() {
-    // Output(b"\x1b[c\x1b[6n") goes through run_output.
-    // FakeTmux::try_read_command(W) == None: tmux already answered the pane.
+    let (mut tmux, model, listener, binding, _pane_rx) = fixture(true);
+    let (tx, rx) = async_channel::bounded(8);
+    tx.try_send(PaneEvent::Output(b"\x1b[c\x1b[6n".to_vec())).unwrap();
+    tx.close();
+    block_on(run_output(model, listener, binding, rx));
+    assert_eq!(tmux.try_read_command(W), None); // tmux already answered the pane
 }
 
 #[test]
 fn input_and_resize_become_tmux_commands() {
-    // run_input with Message::Input(b"hi".into()) then Message::Resize(size with columns 100, rows 30), then Shutdown.
-    //   read_command() == "send-keys -t %0 -H 68 69"
-    //   read_command() == "refresh-client -C @0:100x30"
-    // After Shutdown the pane receiver from subscribe_pane is closed.
+    let (mut tmux, _model, _listener, binding, pane_rx) = fixture(false);
+    let (tx, rx) = async_channel::bounded(8);
+    tx.try_send(Message::Input(b"hi".to_vec().into())).unwrap();
+    tx.try_send(Message::Resize(size_info(100, 30))).unwrap();
+    tx.try_send(Message::Resize(size_info(100, 31))).unwrap();
+    tx.try_send(Message::Shutdown).unwrap();
+    block_on(run_input(binding, rx));
+    assert_eq!(tmux.read_command(), "send-keys -t %0 -H 68 69");
+    assert_eq!(tmux.read_command(), "refresh-client -C @0:100x30");
+    // A background tab restores on its first resize, once.
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
+    assert_eq!(tmux.read_command(), "refresh-client -C @0:100x31");
+    assert!(pane_rx.recv_blocking().is_err());
 }
 
 #[test]
 fn a_drained_paused_pane_is_resumed() {
-    // subscribe with capacity 1 and overflow it (see the Task 4 test); run_output drains.
-    // read_command() == commands::restore_pane(PaneId(0)).
+    let (mut tmux, connection, _events) =
+        FakeTmux::start(ConnectionConfig { pane_channel_capacity: 1 });
+    tmux.handshake("demo", "3.8");
+    let rx = connection.subscribe_pane(PaneId(0));
+    tmux.send("%output %0 a");
+    tmux.send("%output %0 b"); // overflows the channel: the pane is paused
+    assert_eq!(tmux.read_command(), "refresh-client -A '%0:pause'");
+    let (model, listener, binding) = (raw_model(), listener(), binding_for(&connection));
+    let worker = std::thread::spawn(move || block_on(run_output(model, listener, binding, rx)));
+    assert_eq!(tmux.read_command(), commands::restore_pane(PaneId(0)));
+    connection.unsubscribe_pane(PaneId(0)); // closes the receiver so run_output returns
+    worker.join().unwrap();
 }
 ```
 
@@ -1197,25 +1357,24 @@ fn a_drained_paused_pane_is_resumed() {
 
 - [ ] **Step 3: Implement**
 
-  `create_model` follows `remote_tty::TerminalManager::create_model` (`app/src/terminal/remote_tty/terminal_manager.rs:51-160`) line for line, except:
-  - It calls `model.enter_raw_mode()` right after `create_terminal_model`.
-  - It does not write env vars or the zsh init script.
-  - The event loop is a `TmuxEventLoop` model whose constructor runs, in order:
-    1. `subscribe_pane`,
-    2. `resize_window(window, size_info.columns, size_info.rows)`,
-    3. `restore_pane`,
-    4. then it spawns `run_output` and `run_input` on `ctx.background_executor()`, `.detach()`.
+  Extract `build_pty_backed_terminal` from `remote_tty::TerminalManager::create_model` (channels, `Sessions`, model dispatcher, terminal model, `PtyController`, view, `wire_up_pty_controller_with_surface`), with no behavior change. `remote_tty::create_model` then calls it with `raw: false` and its `EventLoop::start` closure. `TmuxTerminalManager::create_model` calls it with `raw: true`, `initial_input_config: None`, and a closure that builds a `TmuxEventLoop`. It does not write env vars or the zsh init script. Nothing else is copied between the two backends.
 
-  `run_output` loop:
-  - `Output` or `Restored`: `unwrapper.push`, lock the model, `Processor::parse_bytes(&mut *model, &buf, &mut io::sink())`, unlock, `send_wakeup_event()`.
+  `TmuxEventLoop::new` takes the model, listener, message receiver, `size_info` and `binding`, and runs, in order:
+  1. `subscribe_pane`,
+  2. only when `binding.visible`: `resize_window(window, size_info.columns, size_info.rows)`, then `restore_pane` (restore needs the grid to equal the window size; background tabs are resized and restored when first shown, spec §9),
+  3. spawn `run_output` and `run_input` on `ctx.background_executor()`, `.detach()`.
+
+  `run_output` creates one `Processor` and one `PassthroughUnwrapper` for the whole loop, because VT parser state persists across lines. Per event:
+  - `Output`: `unwrapper.push`, lock the model, `processor.parse_bytes(&mut *model, &buf, &mut io::sink())`, unlock, `send_wakeup_event()`.
+  - `Restored`: replace the unwrapper with `PassthroughUnwrapper::new()` (a wrapper cut off by a pause must not swallow the restore bytes), then as `Output`.
   - `Paused`: nothing.
   - After each event, `if events.is_empty() { binding.connection.resume_if_paused(binding.pane); }`.
 
   The `io::sink()` gets the one "why" comment here: tmux is the pane's terminal and has already answered its queries.
 
-  `run_input` maps messages:
+  `run_input` keeps `restored = binding.visible` and maps messages:
   - `Input` → `send_input`.
-  - `Resize` → `resize_window`.
+  - `Resize` → `resize_window`; then, if `!restored`, `restore_pane` and `restored = true`.
   - `Shutdown` → `unsubscribe_pane` and stop.
   - `ChildExited` → nothing.
 
@@ -1228,12 +1387,12 @@ fn a_drained_paused_pane_is_resumed() {
 - [ ] **Step 4: Run the tests to verify they pass**
 
   Run: `cargo nextest run -p warp tmux_control::event_loop`
-  Expected: 4 passed.
+  Expected: 5 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/src/terminal/tmux_control app/src/pane_group/mod.rs
+git add app/src/terminal app/src/pane_group/mod.rs
 git commit -m "Add tmux window tab backend modelled on remote_tty"
 ```
 
@@ -1251,14 +1410,15 @@ git commit -m "Add tmux window tab backend modelled on remote_tty"
 - Consumes:
   - from Task 5: `Connection::spawn`, `SpawnConfig` and `tmux_binary`;
   - from Task 3: `commands::{list_windows, describe_window, parse_window_line, WindowInfo}`;
-  - `ConnectionEvent` (Task 4).
+  - `ConnectionEvent` (Task 4);
+  - `TmuxSessionKey` (Task 8), and `use tmux_control::WindowId as TmuxWindowId;`.
 - Produces:
   - `pub struct AttachTarget { pub socket_name: Option<String>, pub session: Option<String> }`.
-  - `pub enum TmuxControlEvent`:
+  - `#[derive(Clone)] pub enum TmuxControlEvent` (`owner_window` is the `warpui::WindowId` of the Workspace that asked; `window` is a `TmuxWindowId`):
     - `Attached { key: TmuxSessionKey, owner_window: WindowId, session_name: String, connection: Connection, windows: Vec<WindowInfo> }`,
     - `WindowAdded { key: TmuxSessionKey, owner_window: WindowId, connection: Connection, window: WindowInfo }`,
-    - `WindowClosed { key: TmuxSessionKey, window: WindowId }`,
-    - `WindowRenamed { key: TmuxSessionKey, window: WindowId, name: String }`,
+    - `WindowClosed { key: TmuxSessionKey, window: TmuxWindowId }`,
+    - `WindowRenamed { key: TmuxSessionKey, window: TmuxWindowId, name: String }`,
     - `SessionRenamed { key: TmuxSessionKey, name: String }`,
     - `Detached { key: TmuxSessionKey, reason: Option<String> }`,
     - `AttachFailed { owner_window: WindowId, message: String }`.
@@ -1266,44 +1426,68 @@ git commit -m "Add tmux window tab backend modelled on remote_tty"
   - Methods on `TmuxControlSessions`:
     - `new() -> Self`
     - `attach(&mut self, target: AttachTarget, owner_window: WindowId, ctx: &mut ModelContext<Self>)`
-    - `release_window(&mut self, key: TmuxSessionKey, window: WindowId, ctx: &mut ModelContext<Self>)`
+    - `release_window(&mut self, key: TmuxSessionKey, window: TmuxWindowId, ctx: &mut ModelContext<Self>)`
     - `fn attach_with_connection(&mut self, connection: Connection, events: async_channel::Receiver<ConnectionEvent>, owner_window: WindowId, ctx: &mut ModelContext<Self>)`, private and used by `attach` and the tests.
 
 - [ ] **Step 1: Write the failing tests** (`sessions_tests.rs`, `App::test`, `FakeTmux`, recording emitted events through `ctx.subscribe_to_model`, waiting with `assert_eventually`)
 
+  Helpers: `KEY = TmuxSessionKey { session: SessionId(0) }`; `info(window, pane, name) -> WindowInfo`; `next_event()` waits for and returns the next recorded `TmuxControlEvent`.
+
 ```rust
 #[test]
 fn attach_lists_windows_then_follows_add_rename_close_and_exit() {
-    // After attach_with_connection and FakeTmux.handshake("demo", "3.8"):
-    //   read_command() == list_windows(); reply(&["@0 %0 zsh", "@1 %1 claude"])
-    //   → Attached { key: TmuxSessionKey { session: SessionId(0) }, session_name: "demo",
-    //       windows: [WindowInfo{@0,%0,"zsh"}, WindowInfo{@1,%1,"claude"}], .. }
-    //   send "%window-add @2"; read_command() == describe_window(WindowId(2)); reply(&["@2 %2 build"])
-    //   → WindowAdded { window: WindowInfo{@2,%2,"build"}, .. }
-    //   send "%window-renamed @1 review" → WindowRenamed { window: @1, name: "review" }
-    //   send "%session-renamed $0 work"  → SessionRenamed { name: "work" }
-    //   send "%window-close @0"          → WindowClosed { window: @0 }
-    //   send "%exit", close the pipe     → Detached { reason: None }
+    // after attach_with_connection(connection, events, owner, ctx) and tmux.handshake("demo", "3.8"):
+    assert_eq!(tmux.read_command(), commands::list_windows());
+    tmux.reply(&["@0 %0 zsh", "@1 %1 claude"]);
+    assert!(matches!(next_event(), TmuxControlEvent::Attached { key: KEY, session_name, windows, .. }
+        if session_name == "demo" && windows == vec![info(0, 0, "zsh"), info(1, 1, "claude")]));
+    tmux.send("%window-add @2");
+    assert_eq!(tmux.read_command(), commands::describe_window(TmuxWindowId(2)));
+    tmux.reply(&["@2 %2 build"]);
+    assert!(matches!(next_event(), TmuxControlEvent::WindowAdded { window, .. } if window == info(2, 2, "build")));
+    tmux.send("%window-renamed @1 review");
+    assert!(matches!(next_event(), TmuxControlEvent::WindowRenamed { window: TmuxWindowId(1), name, .. } if name == "review"));
+    tmux.send("%session-renamed $0 work");
+    assert!(matches!(next_event(), TmuxControlEvent::SessionRenamed { name, .. } if name == "work"));
+    tmux.send("%window-close @0");
+    assert!(matches!(next_event(), TmuxControlEvent::WindowClosed { window: TmuxWindowId(0), .. }));
+    tmux.send("%exit");
+    tmux.close();
+    assert!(matches!(next_event(), TmuxControlEvent::Detached { key: KEY, reason: None }));
 }
 
 #[test]
 fn version_refusal_becomes_attach_failed() {
-    // handshake("demo", "3.3") → AttachFailed { message: "tmux 3.3 is too old; Tarp needs tmux 3.4 or newer" }
+    // after attach_with_connection and tmux.handshake("demo", "3.3"):
+    assert!(matches!(next_event(), TmuxControlEvent::AttachFailed { message, .. }
+        if message == "tmux 3.3 is too old; Tarp needs tmux 3.4 or newer"));
+}
+
+#[test]
+fn closing_before_ready_reports_attach_failed() {
+    // after attach_with_connection: tmux sends no block at all, then tmux.close()
+    assert!(matches!(next_event(), TmuxControlEvent::AttachFailed { message, .. } if message == "tmux exited"));
 }
 
 #[test]
 fn releasing_the_last_window_detaches() {
-    // After Attached with windows @0 and @1:
-    //   release_window(key, @0) writes nothing (try_read_command(W) == None);
-    //   release_window(key, @1) → read_command() == "detach-client".
+    // after Attached with windows @0 and @1 (as in the first test):
+    sessions.update(&mut app, |s, ctx| s.release_window(KEY, TmuxWindowId(0), ctx));
+    assert_eq!(tmux.try_read_command(W), None);
+    sessions.update(&mut app, |s, ctx| s.release_window(KEY, TmuxWindowId(1), ctx));
+    assert_eq!(tmux.read_command(), "detach-client");
+    // unknown key or window: no-op, nothing written
+    sessions.update(&mut app, |s, ctx| s.release_window(KEY, TmuxWindowId(9), ctx));
+    assert_eq!(tmux.try_read_command(W), None);
 }
 
 #[test]
 fn attaching_an_attached_session_relists_on_the_existing_connection() {
-    // A second connection's handshake reports $0 as well:
-    //   the second connection gets "detach-client";
-    //   the first gets list_windows() again;
-    //   a new Attached is emitted with the first connection.
+    // first connection attached as above; a second FakeTmux's handshake reports $0 as well:
+    assert_eq!(second.read_command(), "detach-client");
+    assert_eq!(first.read_command(), commands::list_windows());
+    first.reply(&["@0 %0 zsh"]);
+    assert!(matches!(next_event(), TmuxControlEvent::Attached { windows, .. } if windows == vec![info(0, 0, "zsh")]));
 }
 ```
 
@@ -1321,7 +1505,9 @@ fn attaching_an_attached_session_relists_on_the_existing_connection() {
 
   Pending connections are keyed by a local `u64` until `Ready`. On `Ready { session, .. }`:
   - **Key already attached.** `detach()` the new connection and re-list on the existing one.
-  - **New key.** `connection.command(list_windows())`. Await it with `ctx.spawn`, then insert `AttachedSession { connection, owner_window, name, open_windows: HashSet<WindowId> }` and emit `Attached`.
+  - **New key.** `connection.command(list_windows())`. Await it with `ctx.spawn`, then insert `AttachedSession { connection, owner_window, name, open_windows: HashSet<TmuxWindowId> }` and emit `Attached`.
+
+  `open_windows` upkeep: `Attached` (including a re-list) sets it to the listed windows, `WindowAdded` inserts, and `WindowClosed` removes.
 
   Notification mapping matches every `Notification` variant:
   - `WindowAdd` → `describe_window`, then `WindowAdded`.
@@ -1331,13 +1517,14 @@ fn attaching_an_attached_session_relists_on_the_existing_connection() {
   Connection outcomes:
   - `Failed` → `AttachFailed`.
   - `Closed` on an attached key → remove it and emit `Detached`.
+  - `Closed` on a pending key that has not failed → `AttachFailed { message: reason.unwrap_or("tmux exited") }`. This covers a missing server, where tmux prints "no sessions" to stderr and exits without a `%error` block.
 
-  `release_window` removes the window from `open_windows` and calls `detach()` when the set is empty.
+  `release_window` is a no-op for an unknown key or window. Otherwise it removes the window from `open_windows` and calls `detach()` when the set is empty.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
   Run: `cargo nextest run -p warp tmux_control::sessions`
-  Expected: 4 passed.
+  Expected: 5 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1353,10 +1540,10 @@ git commit -m "Add TmuxControlSessions: one control connection per tmux session,
 **Files:**
 - Create: `app/src/workspace/view/tmux_control_tabs.rs` (declared in `app/src/workspace/view.rs` next to `mod tab_grouping;` at line 20, under `#[cfg(not(target_family = "wasm"))]`)
 - Modify: `app/src/workspace/view.rs`:
-  - field `tmux_window_tabs: HashMap<(TmuxSessionKey, WindowId), EntityId>`,
+  - field `tmux_window_tabs: HashMap<(TmuxSessionKey, TmuxWindowId), EntityId>` (with `use tmux_control::WindowId as TmuxWindowId;`),
   - subscribe to `TmuxControlSessions` in `Workspace::new`, next to the `CLIAgentSessionsModel` subscription at 3340,
   - the `AttachTmuxSession` arm in `handle_action`,
-  - in `snapshot` (12191), filter `!self.is_tmux_window_tab(pane_group_view.id())` before `.map`, next to the existing read-only filter.
+  - in `snapshot` (starts at 12153), add a `.filter(|(_, pane_group_view)| !self.is_tmux_window_tab(pane_group_view.id()))` before `.map`, next to the existing transferred-tab filter (`Some(*tab_index) != transferred_tab_index`, ~12193).
 - Modify: `app/src/workspace/action.rs` (`WorkspaceAction::AttachTmuxSession`; add it to the `false` arm of `should_save_app_state_on_action`)
 - Modify: `app/src/workspace/mod.rs` (palette binding)
 - Modify: `app/src/workspace/view/tab_grouping.rs`:
@@ -1376,6 +1563,7 @@ git commit -m "Add TmuxControlSessions: one control connection per tmux session,
   - `Workspace::attach_tmux_session(&mut self, ctx: &mut ViewContext<Self>)`.
   - `pub(super) fn handle_tmux_control_event(&mut self, event: &TmuxControlEvent, ctx: &mut ViewContext<Self>)`.
   - `pub(super) fn is_tmux_window_tab(&self, pane_group_id: EntityId) -> bool`.
+  - `fn open_tmux_window_tab(&mut self, key: TmuxSessionKey, window: &WindowInfo, connection: &Connection, index: Option<usize>, activate: bool, ctx: &mut ViewContext<Self>) -> usize`: builds the tab for one tmux window and returns its index.
 
 **Entry point decision.** The palette entry is "Attach tmux session" (`workspace:attach_tmux_session`):
 - `.with_enabled(|| FeatureFlag::TmuxControlMode.is_enabled())`,
@@ -1386,50 +1574,76 @@ It attaches the session of the active tab when that tab's shell is a tmux client
 
 - [ ] **Step 1: Write the failing tests** (`view_tests.rs`)
 
-  These use `FakeTmux` connections and call `handle_tmux_control_event` directly, with `GroupedTabs` and `TmuxControlMode` overridden on. The helper `attached(windows: &[(u32, u32, &str)]) -> TmuxControlEvent` builds `Attached` for key `$0`, session `"demo"`, and the workspace's own `window_id`.
+  These use a `FakeTmux` connection and call `handle_tmux_control_event` directly, with `GroupedTabs` and `TmuxControlMode` overridden on. Helpers in `view_tests.rs`:
+  - `attached(windows: &[(u32, u32, &str)], connection: &Connection) -> TmuxControlEvent` builds `Attached` for key `$0`, session `"demo"`, and the workspace's own `window_id`;
+  - `tab_titles(&Workspace, &AppContext) -> Vec<String>` (each tab's display title);
+  - `tab_group_name(&Workspace, tab_index: usize) -> Option<String>`;
+  - `toast_messages(&Workspace) -> Vec<String>`.
 
 ```rust
 #[test]
 fn test_tmux_attached_session_opens_window_tabs_in_one_group() {
-    // A workspace with 1 tab receives attached(&[(0, 0, "zsh"), (1, 1, "claude")]):
-    //   tabs.len() == 3;
-    //   tabs 1 and 2 share a group whose name == Some("demo");
-    //   display_title of tabs 1 and 2 == "zsh", "claude";
-    //   active_tab_index == 1.
+    // workspace with 1 tab:
+    workspace.handle_tmux_control_event(&attached(&[(0, 0, "zsh"), (1, 1, "claude")], &connection), ctx);
+    assert_eq!(workspace.tabs.len(), 3);
+    assert_eq!(tab_titles(workspace, ctx)[1..], ["zsh", "claude"]);
+    assert_eq!(tab_group_name(workspace, 1), Some("demo".into()));
+    assert_eq!(tab_group_name(workspace, 2), Some("demo".into()));
+    assert_eq!(workspace.active_tab_index, 1);
 }
 
 #[test]
 fn test_tmux_window_events_follow_tmux() {
-    // After attached(...) as above:
-    //   WindowAdded @2 "build" → tabs.len() == 4, tab 3 is in the "demo" group, active_tab_index still 1;
-    //   WindowRenamed @1 "review" → tab titled "review";
-    //   SessionRenamed "work" → the group name == Some("work");
-    //   WindowClosed @0 → tabs.len() == 3 and no tab titled "zsh";
-    //   Detached → tabs.len() == 1.
+    // after the attach above:
+    workspace.handle_tmux_control_event(&TmuxControlEvent::WindowAdded { key: KEY, owner_window: window_id,
+        connection: connection.clone(), window: info(2, 2, "build") }, ctx);
+    assert_eq!(workspace.tabs.len(), 4);
+    assert_eq!(tab_group_name(workspace, 3), Some("demo".into()));
+    assert_eq!(workspace.active_tab_index, 1);
+    workspace.handle_tmux_control_event(&TmuxControlEvent::WindowRenamed { key: KEY, window: TmuxWindowId(1), name: "review".into() }, ctx);
+    assert_eq!(tab_titles(workspace, ctx)[2], "review");
+    workspace.handle_tmux_control_event(&TmuxControlEvent::SessionRenamed { key: KEY, name: "work".into() }, ctx);
+    assert_eq!(tab_group_name(workspace, 1), Some("work".into()));
+    workspace.handle_tmux_control_event(&TmuxControlEvent::WindowClosed { key: KEY, window: TmuxWindowId(0) }, ctx);
+    assert_eq!(workspace.tabs.len(), 3);
+    assert!(!tab_titles(workspace, ctx).contains(&"zsh".to_string()));
+    workspace.handle_tmux_control_event(&TmuxControlEvent::Detached { key: KEY, reason: None }, ctx);
+    assert_eq!(workspace.tabs.len(), 1);
 }
 
 #[test]
 fn reattach_reopens_closed_windows_without_duplicates() {
-    // attached(@0, @1); the user closes the @1 tab (close_tab); attached(@0, @1) again
-    //   → tabs.len() == 3 and exactly one tab per window.
+    // attached(@0 "zsh", @1 "claude"); then the user closes the @1 tab:
+    workspace.close_tab(2, true, false, ctx);
+    workspace.handle_tmux_control_event(&attached(&[(0, 0, "zsh"), (1, 1, "claude")], &connection), ctx);
+    assert_eq!(workspace.tabs.len(), 3);
+    let titles = tab_titles(workspace, ctx);
+    assert_eq!(titles.iter().filter(|title| *title == "zsh").count(), 1);
+    assert_eq!(titles.iter().filter(|title| *title == "claude").count(), 1);
 }
 
 #[test]
 fn snapshot_excludes_tmux_window_tabs() {
-    // After attached(@0, @1): workspace.snapshot(window_id, false, ctx).tabs.len() == 1
+    // after attached(@0, @1):
+    assert_eq!(workspace.snapshot(window_id, false, ctx).tabs.len(), 1);
 }
 
 #[test]
 fn attach_failure_shows_toast_and_opens_no_tab() {
-    // AttachFailed { owner_window: window_id, message: "tmux refused to attach: no sessions" }
-    //   → tabs.len() == 1 and the toast stack holds one toast with that message.
-    // The same event with another owner_window adds no toast.
+    let message = "tmux refused to attach: no sessions".to_string();
+    workspace.handle_tmux_control_event(&TmuxControlEvent::AttachFailed { owner_window: window_id, message: message.clone() }, ctx);
+    assert_eq!(workspace.tabs.len(), 1);
+    assert_eq!(toast_messages(workspace), vec![message.clone()]);
+    workspace.handle_tmux_control_event(&TmuxControlEvent::AttachFailed { owner_window: WindowId::new(), message }, ctx);
+    assert_eq!(toast_messages(workspace).len(), 1);
 }
 
 #[test]
 fn attach_action_is_inert_when_control_mode_is_off() {
-    // With the setting off, handle_action(&WorkspaceAction::AttachTmuxSession) spawns nothing
-    // and tabs.len() is unchanged.
+    // setting off (default):
+    workspace.handle_action(&WorkspaceAction::AttachTmuxSession, ctx);
+    assert_eq!(workspace.tabs.len(), 1);
+    assert!(toast_messages(workspace).is_empty());
 }
 ```
 
@@ -1440,15 +1654,15 @@ fn attach_action_is_inert_when_control_mode_is_off() {
 
 - [ ] **Step 3: Implement**
 
-  Events are handled only when `owner_window == self.window_id` (events without an owner, such as `WindowClosed`, act on whatever this workspace has in `tmux_window_tabs`).
+  Events with an `owner_window` are handled only when it equals `self.window_id`. Events without one, such as `WindowClosed`, act on whatever this workspace has in `tmux_window_tabs`.
 
-  - **`Attached`** is idempotent:
-    - For each window without a live tab, build `PaneGroup::new_for_tmux_window` (arguments as in `add_tab_for_joining_shared_session`, view.rs:4687).
-    - Push it with `TabData::new`, push its id to `tab_mru_order`, and subscribe `handle_file_tree_event`.
-    - `set_custom_title(Some(name))`, and record it in `tmux_window_tabs`.
-    - When `FeatureFlag::GroupedTabs` is on, `put_tab_in_named_group(index, &session_name)`.
-    - Activate the first newly created tab, if any.
-  - **`WindowAdded`:** insert at `index_after_group(group)` (or at the end) without activating.
+  - **`open_tmux_window_tab(key, window, connection, index, activate, ctx)`** is the single place a tab is built, for both `Attached` and `WindowAdded`:
+    - build `PaneGroup::new_for_tmux_window` with a `TmuxPaneBinding { visible: activate, .. }` (other arguments as in `add_tab_for_joining_shared_session`, view.rs:4687);
+    - insert it with `TabData::new` at `index` (or push), add its id to `tab_mru_order`, and subscribe `handle_file_tree_event`;
+    - `set_custom_title(Some(name))`, and record it in `tmux_window_tabs`;
+    - activate it when `activate`.
+  - **`Attached`** is idempotent. For each window without a live tab it calls `open_tmux_window_tab` with `activate` true for the first new tab only. When `FeatureFlag::GroupedTabs` is on, it then calls `put_tab_in_named_group(index, &session_name)` for each new tab.
+  - **`WindowAdded`:** `open_tmux_window_tab` at `index_after_group(group)` (or `None` for the end), `activate: false`, then `put_tab_in_named_group` when grouped.
   - **`WindowRenamed`:** `set_custom_title`.
   - **`SessionRenamed`:** rename the group that holds the key's tabs.
   - **`WindowClosed`:** `close_tab(index, true, false, ctx)` and remove the map entry.

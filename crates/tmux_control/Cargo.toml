@@ -1,0 +1,17 @@
+[package]
+name = "tmux_control"
+version = "0.1.0"
+edition = "2024"
+description = "tmux control-mode (-CC) protocol client"
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+async-channel.workspace = true
+command.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+
+[features]
+test-util = []

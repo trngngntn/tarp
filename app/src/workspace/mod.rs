@@ -1086,7 +1086,28 @@ pub fn init(app: &mut AppContext) {
                 & id!("Workspace_ActiveTabGroupPinned")
                 & !id!("Workspace_PaneDragging"),
         ),
+        EditableBinding::new(
+            "workspace:attach_tmux_session",
+            "Attach tmux session",
+            WorkspaceAction::AttachTmuxSession,
+        )
+        .with_enabled(|| FeatureFlag::TmuxControlMode.is_enabled())
+        .with_group(bindings::BindingGroup::Navigation.as_str())
+        .with_context_predicate(id!("Workspace") & id!(flags::TMUX_CONTROL_MODE_CONTEXT_FLAG)),
     ]);
+
+    settings_view::ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(
+        vec![
+            settings_view::ToggleSettingActionPair::new(
+                "tmux control mode",
+                WorkspaceAction::ToggleTmuxControlMode,
+                &id!("Workspace"),
+                flags::TMUX_CONTROL_MODE_CONTEXT_FLAG,
+            )
+            .with_enabled(|| FeatureFlag::TmuxControlMode.is_enabled()),
+        ],
+        app,
+    );
 
     app.register_editable_bindings([
         EditableBinding::new(
@@ -1596,8 +1617,10 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
         .with_custom_action(CustomAction::ConfigureKeybindings),
         EditableBinding::new(
             "workspace:show_settings_about_page",
-            BindingDescription::new("Open Settings: About")
-                .with_custom_description(bindings::MAC_MENUS_CONTEXT, concat!("About ", app_display_name!())),
+            BindingDescription::new("Open Settings: About").with_custom_description(
+                bindings::MAC_MENUS_CONTEXT,
+                concat!("About ", app_display_name!()),
+            ),
             WorkspaceAction::ShowSettingsPage(SettingsSection::About),
         )
         .with_group(bindings::BindingGroup::Settings.as_str())

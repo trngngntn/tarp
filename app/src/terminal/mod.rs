@@ -76,6 +76,8 @@ pub mod universal_developer_input;
 pub mod ssh;
 pub mod terminal_manager;
 mod terminal_size_element;
+#[cfg(not(target_family = "wasm"))]
+pub mod tmux_control;
 pub mod view;
 pub mod warpify;
 mod waterfall_gap_element;
@@ -235,6 +237,27 @@ impl SizeUpdate {
             new_gap_height: None,
             natural_rows: new_size.rows(),
             natural_cols: new_size.columns(),
+        }
+    }
+
+    /// Creates a size update that re-applies `size`.
+    pub fn refresh(size: SizeInfo) -> Self {
+        Self {
+            update_reason: SizeUpdateReason::Refresh,
+            last_size: size,
+            new_size: size,
+            new_gap_height: None,
+            natural_rows: size.rows(),
+            natural_cols: size.columns(),
+        }
+    }
+
+    /// This update with the grid held at `rows` by `columns`, coming from `last_size`.
+    fn with_grid(self, last_size: SizeInfo, rows: usize, columns: usize) -> Self {
+        Self {
+            last_size,
+            new_size: self.new_size.with_rows_and_columns(rows, columns),
+            ..self
         }
     }
 

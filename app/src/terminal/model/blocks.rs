@@ -327,6 +327,8 @@ pub struct BlockList {
 
     show_memory_stats: bool,
 
+    is_raw: bool,
+
     active_gap: Option<Gap>,
 
     honor_ps1: bool,
@@ -696,6 +698,7 @@ impl BlockList {
             show_warp_bootstrap_block: show_warp_bootstrap_input,
             show_in_band_command_blocks,
             show_memory_stats,
+            is_raw: false,
             honor_ps1,
             is_restored_session: false,
             restored_session_ts: None,
@@ -2560,6 +2563,7 @@ impl BlockList {
     }
 
     pub fn set_show_memory_stats(&mut self, should_show_memory_stats: bool) {
+        let should_show_memory_stats = should_show_memory_stats && !self.is_raw;
         self.show_memory_stats = should_show_memory_stats;
         self.update_blocks_and_sumtree(
             None,
@@ -3098,6 +3102,25 @@ impl BlockList {
 
     pub fn set_bootstrapped(&mut self) {
         self.bootstrap_stage = BootstrapStage::Bootstrapped;
+    }
+
+    /// Finishes the initial input block and opens a hidden-command block that is already
+    /// executing, so all later output lands in it without any shell hooks.
+    pub(super) fn enter_raw_mode(&mut self) {
+        // The footer adds height below the block, pushing the grid's top row out of the viewport.
+        self.set_show_memory_stats(false);
+        self.is_raw = true;
+        self.active_block_mut().finish(0);
+        self.bootstrap_stage = BootstrapStage::PostBootstrapPrecmd;
+        self.create_new_block(
+            BlockId::new(),
+            BootstrapStage::PostBootstrapPrecmd,
+            None,
+            None,
+        );
+        self.start_active_block();
+        self.apply_preexec_to_active(PreexecValue::default());
+        self.active_block_mut().set_should_hide_command_grid(true);
     }
 
     pub fn is_empty(&self) -> bool {

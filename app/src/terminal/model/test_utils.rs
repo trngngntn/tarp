@@ -31,7 +31,8 @@ use super::{ObfuscateSecrets, TerminalModel};
 use crate::ai::blocklist::SerializedBlockListItem;
 use crate::terminal::color::{self, Colors};
 use crate::terminal::event_listener::ChannelEventListener;
-use crate::terminal::{BlockPadding, SizeInfo};
+use crate::terminal::shell::{ShellName, ShellType};
+use crate::terminal::{BlockPadding, ShellLaunchState, SizeInfo};
 
 pub fn block_size() -> BlockSize {
     BlockSize {
@@ -335,6 +336,32 @@ impl TerminalModel {
             false, /* is_inverted */
             None,
         )
+    }
+
+    /// Creates a [`TerminalModel`] in raw mode, as used for backends that never bootstrap.
+    pub fn new_raw_for_test() -> TerminalModel {
+        let mut model = TerminalModel::new(
+            None,
+            block_size(),
+            color::List::from(&Colors::default()),
+            ChannelEventListener::new_for_test(),
+            Arc::new(Background::default()),
+            false, /* should_show_bootstrap_block */
+            false, /* should_show_in_band_command_blocks */
+            false, /* should_show_memory_stats */
+            false, /* honor_ps1 */
+            false, /* is_inverted */
+            ObfuscateSecrets::No,
+            false, /* is_ai_ugc_telemetry_enabled */
+            None,
+            ShellLaunchState::ShellSpawned {
+                available_shell: None,
+                display_name: ShellName::blank(),
+                shell_type: ShellType::Zsh,
+            },
+        );
+        model.enter_raw_mode();
+        model
     }
 
     /// Simulates the creation of a block as if the `input` command

@@ -303,6 +303,12 @@ impl TerminalView {
         model: &TerminalModel,
         app: &AppContext,
     ) -> bool {
+        // A raw model's grid is sized to exactly fill the view, so any footer pushes its top rows
+        // out of view.
+        if model.is_raw() {
+            return false;
+        }
+
         let ai_settings = AISettings::as_ref(app);
 
         // If the warpify footer is active, a subshell was detected and we should show the footer.

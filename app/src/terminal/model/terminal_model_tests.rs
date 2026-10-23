@@ -2409,3 +2409,45 @@ fn cloud_mode_setup_phase_ended_does_not_emit_when_not_sharing() {
     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
     assert!(events.is_empty());
 }
+
+#[test]
+fn raw_mode_shows_output_in_an_executing_post_bootstrap_block() {
+    let mut model = TerminalModel::new_raw_for_test();
+    Processor::default().parse_bytes(&mut model, b"hello\r\n", &mut std::io::sink());
+    let block = model.block_list().active_block();
+    assert!(model.is_raw());
+    assert!(model.block_list().is_bootstrapping_precmd_done());
+    assert_eq!(block.bootstrap_stage(), BootstrapStage::PostBootstrapPrecmd);
+    assert_eq!(block.state(), BlockState::Executing);
+    assert_eq!(block.output_to_string(), "hello\n");
+}
+
+#[test]
+fn raw_mode_ignores_shell_integration_hooks() {
+    let mut model = TerminalModel::new_raw_for_test();
+    let session_id = 167303092612201;
+    model.register_session_id(SessionId::from(session_id));
+    let before = model.block_list().active_block().id().clone();
+
+    for hook in [
+        format!(
+            r#"{{"hook": "Preexec", "value": {{"command": "ls", "session_id": {session_id}}}}}"#
+        ),
+        format!(
+            r#"{{"hook": "CommandFinished", "value": {{"exit_code": 0, "next_block_id": "next", "session_id": {session_id}}}}}"#
+        ),
+        format!(r#"{{"hook": "Precmd", "value": {{"pwd": "/tmp", "session_id": {session_id}}}}}"#),
+    ] {
+        model.process_bytes(hex_encoded_json_dcs(&hook).as_slice());
+    }
+    let mut rc_file_hook = b"\x1bP$f".to_vec();
+    rc_file_hook.extend(br#"{"hook": "SourcedRcFileForWarp", "value": {"shell": "zsh"}}"#);
+    rc_file_hook.push(0x9c);
+    model.process_bytes(rc_file_hook.as_slice());
+
+    let block = model.block_list().active_block();
+    assert_eq!(block.id(), &before);
+    assert_eq!(block.command_to_string(), "");
+    assert_eq!(block.state(), BlockState::Executing);
+    assert_eq!(model.did_receive_rc_file_dcs, None);
+}

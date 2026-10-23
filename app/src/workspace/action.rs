@@ -238,9 +238,15 @@ pub enum WorkspaceAction {
     /// Unpins the tab at the given index.
     UnpinTab(usize),
     /// Sets or clears the user's unread mark on the tab at the given index.
-    SetTabMarkedUnread { pane_group_id: EntityId, unread: bool },
+    SetTabMarkedUnread {
+        pane_group_id: EntityId,
+        unread: bool,
+    },
     /// Puts the tab to sleep in the vertical tabs sidebar, or wakes it.
-    SetTabInactive { pane_group_id: EntityId, inactive: bool },
+    SetTabInactive {
+        pane_group_id: EntityId,
+        inactive: bool,
+    },
     /// Folds or unfolds the framed sidebar's "Other" section (tabs in no group).
     ToggleOtherSectionCollapsed,
     /// Pins the active tab.
@@ -407,6 +413,9 @@ pub enum WorkspaceAction {
     ToggleVerticalTabsShowPrLink,
     ToggleVerticalTabsShowDiffStats,
     ToggleVerticalTabsShowDetailsOnHover,
+    ToggleTmuxControlMode,
+    /// Opens the windows of a tmux session as tabs, through tmux control mode.
+    AttachTmuxSession,
     /// Closes the focused panel. This happens as an explicit action from the user.
     ClosePanel,
     CopyTextToClipboard(String),
@@ -1117,6 +1126,8 @@ impl WorkspaceAction {
             | ToggleVerticalTabsShowPrLink
             | ToggleVerticalTabsShowDiffStats
             | ToggleVerticalTabsShowDetailsOnHover
+            | ToggleTmuxControlMode
+            | AttachTmuxSession
             | ToggleWelcomeTips
             | CopyTextToClipboard(_)
             | CopyCurrentPath

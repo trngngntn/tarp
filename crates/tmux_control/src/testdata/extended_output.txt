@@ -1,0 +1,12 @@
+%begin 1792572885 315 0
+%end 1792572885 315 0
+%session-changed $0 demo
+%begin 1792572886 317 1
+%end 1792572886 317 1
+%begin 1792572886 318 1
+%end 1792572886 318 1
+%window-add @1
+%extended-output %0 1 : hé\134\015\012\033Ptmux;\033\033]777;notify;warp://cli-agent;{"x":1}\007\033\134
+%window-renamed @0 zsh
+%window-close @1
+%exit

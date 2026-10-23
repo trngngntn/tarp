@@ -222,6 +222,10 @@ impl TerminalPane {
         app: &AppContext,
     ) -> SessionNavigationData {
         let view = self.terminal_view(app).as_ref(app);
+        let (is_raw, shared_session_status) = {
+            let model = view.model.lock();
+            (model.is_raw(), model.shared_session_status().clone())
+        };
         SessionNavigationData::new(
             view.full_prompt(app),
             view.prompt_elements(app),
@@ -232,8 +236,9 @@ impl TerminalPane {
             },
             view.last_focus_ts(),
             view.is_read_only(),
+            is_raw,
             window_id,
-            view.model.lock().shared_session_status().clone(),
+            shared_session_status,
         )
     }
 

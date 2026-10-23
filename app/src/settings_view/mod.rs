@@ -506,6 +506,7 @@ pub mod flags {
     pub const MOUSE_REPORTING_CONTEXT_FLAG: &str = "Mouse_Reporting";
     pub const SCROLL_REPORTING_CONTEXT_FLAG: &str = "Scroll_Reporting";
     pub const FOCUS_REPORTING_CONTEXT_FLAG: &str = "Focus_Reporting";
+    pub const TMUX_CONTROL_MODE_CONTEXT_FLAG: &str = "Tmux_Control_Mode";
     pub const SSH_REUSE_CONTROL_MASTER_CONTEXT_FLAG: &str = "SSH_Reuse_Control_Master";
     pub const SSH_WARPIFICATION_CONTEXT_FLAG: &str = "SSH_Warpification";
     pub const NOTIFICATIONS_CONTEXT_FLAG: &str = "Notifications_Enabled";

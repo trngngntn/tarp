@@ -1,0 +1,27 @@
+%begin 1792572895 315 0
+%end 1792572895 315 0
+%session-changed $0 demo
+%begin 1792572895 317 1
+%end 1792572895 317 1
+%layout-change @0 285d,40x5,0,0[40x2,0,0,0,40x2,0,3,1] 285d,40x5,0,0[40x2,0,0,0,40x2,0,3,1] *
+%output %0 hé\134\015\012
+%window-renamed @0 zsh
+%begin 1792572896 318 1
+%end 1792572896 318 1
+%window-pane-changed @0 %1
+%begin 1792572896 319 1
+%end 1792572896 319 1
+%unlinked-window-add @1
+%sessions-changed
+%unlinked-window-renamed @1 tmux
+%window-renamed @0 sleep
+%begin 1792572896 320 1
+%end 1792572896 320 1
+%session-renamed $0 demo2
+%begin 1792572896 321 1
+parse error: unknown command: bogus-command
+%error 1792572896 321 1
+%unlinked-window-renamed @1 zsh
+%begin 1792572897 322 1
+%end 1792572897 322 1
+%exit

@@ -1,22 +1,22 @@
 use std::collections::HashSet;
 
 use itertools::{Either, Itertools};
+#[cfg(not(target_family = "wasm"))]
+use settings::Setting as _;
 use warp_core::features::FeatureFlag;
+#[cfg(not(target_family = "wasm"))]
+use warpui::SingletonEntity as _;
 use warpui::{EntityId, UpdateView, ViewContext};
 
 use super::{Workspace, group_member_indices};
 use crate::menu::{MenuItem, MenuItemFields};
 use crate::tab::{MOVE_TO_GROUP_LABEL, TabData};
+#[cfg(not(target_family = "wasm"))]
+use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::workspace::action::{TabContextMenuAnchor, WorkspaceAction};
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
 #[cfg(not(target_family = "wasm"))]
-use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
-#[cfg(not(target_family = "wasm"))]
 use crate::workspace::tab_settings::TabSettings;
-#[cfg(not(target_family = "wasm"))]
-use settings::Setting as _;
-#[cfg(not(target_family = "wasm"))]
-use warpui::SingletonEntity as _;
 use crate::workspace::util::PaneViewLocator;
 
 // TODO(johnturcoo) move tab grouping helpers here from workspace/view.rs.
@@ -905,7 +905,11 @@ fn tmux_sync_enabled(ctx: &warpui::AppContext) -> bool {
 /// renames and regroups sessions with plain tmux commands.
 #[cfg(not(target_family = "wasm"))]
 fn tmux_session_script(ctx: &warpui::AppContext) -> Option<std::path::PathBuf> {
-    let script = TabSettings::as_ref(ctx).tmux_session_script.value().trim().to_owned();
+    let script = TabSettings::as_ref(ctx)
+        .tmux_session_script
+        .value()
+        .trim()
+        .to_owned();
     if script.is_empty() {
         return None;
     }
@@ -913,7 +917,10 @@ fn tmux_session_script(ctx: &warpui::AppContext) -> Option<std::path::PathBuf> {
     if path.exists() {
         Some(path)
     } else {
-        log::warn!("tmux session script {} does not exist; using tmux commands", path.display());
+        log::warn!(
+            "tmux session script {} does not exist; using tmux commands",
+            path.display()
+        );
         None
     }
 }
@@ -1073,15 +1080,18 @@ impl Workspace {
         read_at: std::time::Instant,
         ctx: &mut ViewContext<Self>,
     ) {
-        let open_tabs: HashSet<EntityId> = self.tabs.iter().map(|tab| tab.pane_group.id()).collect();
+        let open_tabs: HashSet<EntityId> =
+            self.tabs.iter().map(|tab| tab.pane_group.id()).collect();
         let mut tab_sessions: std::collections::HashMap<EntityId, tmux_agents::ClientSession> =
             std::collections::HashMap::new();
         self.tmux_tab_groups.retain(|id, _| open_tabs.contains(id));
-        self.tmux_tab_session_names.retain(|id, _| open_tabs.contains(id));
+        self.tmux_tab_session_names
+            .retain(|id, _| open_tabs.contains(id));
         self.tmux_tab_flags.retain(|id, _| open_tabs.contains(id));
         let mut flags_changed = false;
         let paths_before = std::mem::take(&mut self.tmux_tab_paths);
-        self.tmux_rename_settle.retain(|id, _| open_tabs.contains(id));
+        self.tmux_rename_settle
+            .retain(|id, _| open_tabs.contains(id));
         let mut regrouped = false;
         let mut synced = HashSet::new();
         for &(pane_group_id, pid) in shells {
@@ -1170,8 +1180,8 @@ impl Workspace {
         if self.current_workspace_state.is_tab_being_dragged || self.is_group_being_dragged {
             return;
         }
-        let fresh = !self.tmux_layout.writing
-            && read_sees_write(self.tmux_layout.written_at, read_at);
+        let fresh =
+            !self.tmux_layout.writing && read_sees_write(self.tmux_layout.written_at, read_at);
         if tmux_layout::should_adopt(read_rev, self.tmux_layout.rev, fresh) {
             let tabs = self.layout_tabs(tab_sessions);
             let order: Vec<EntityId> = tmux_layout::adopted_order(&tabs, &tmux_groups)
@@ -1286,7 +1296,11 @@ impl Workspace {
             (tab.inactive, tab.marked_unread) = in_tmux;
             self.tmux_tab_flags.insert(
                 pane_group_id,
-                TmuxTabFlags { inactive: in_tmux.0, unread: in_tmux.1, written_at: None },
+                TmuxTabFlags {
+                    inactive: in_tmux.0,
+                    unread: in_tmux.1,
+                    written_at: None,
+                },
             );
             return changed;
         };
@@ -1294,8 +1308,18 @@ impl Workspace {
         let mut changed = false;
         let mut wrote = false;
         for (option, in_app, in_tmux, last) in [
-            ("@warp_inactive", &mut tab.inactive, in_tmux.0, &mut agreed.inactive),
-            ("@warp_unread", &mut tab.marked_unread, in_tmux.1, &mut agreed.unread),
+            (
+                "@warp_inactive",
+                &mut tab.inactive,
+                in_tmux.0,
+                &mut agreed.inactive,
+            ),
+            (
+                "@warp_unread",
+                &mut tab.marked_unread,
+                in_tmux.1,
+                &mut agreed.unread,
+            ),
         ] {
             if *in_app != *last {
                 tmux_agents::set_session_flag(&session.id, option, *in_app);
@@ -1338,10 +1362,13 @@ impl Workspace {
             }
         };
         if !take_tmux {
-            let agreed = self.tmux_tab_groups.entry(pane_group_id).or_insert(TmuxTabGroup {
-                name: session.group.clone(),
-                written_at: None,
-            });
+            let agreed = self
+                .tmux_tab_groups
+                .entry(pane_group_id)
+                .or_insert(TmuxTabGroup {
+                    name: session.group.clone(),
+                    written_at: None,
+                });
             // New to the app (first match) or changed in the app: the session takes it. A push
             // that failed is not retried; the next fresh read then takes the session's group.
             if agreed.name != current {
@@ -1383,7 +1410,10 @@ impl Workspace {
         }
         self.tmux_tab_groups.insert(
             pane_group_id,
-            TmuxTabGroup { name: session.group.clone(), written_at: None },
+            TmuxTabGroup {
+                name: session.group.clone(),
+                written_at: None,
+            },
         );
         true
     }
@@ -1405,13 +1435,15 @@ impl Workspace {
         }
         if !settle.warned && settle.started.elapsed() >= TMUX_RENAME_WARN {
             settle.warned = true;
-            log::warn!("tmux session {session_name} did not take the tab's new name; keeping the typed title");
+            log::warn!(
+                "tmux session {session_name} did not take the tab's new name; keeping the typed title"
+            );
         }
         true
     }
 
     /// Puts a tab into the group with this name, creating the group if there is none yet.
-    fn put_tab_in_named_group(&mut self, tab_index: usize, name: &str) {
+    pub(super) fn put_tab_in_named_group(&mut self, tab_index: usize, name: &str) {
         let group_id = self
             .tab_groups
             .values()
@@ -1587,7 +1619,9 @@ impl Workspace {
         // The framework takes the view being updated out of its window's view map, so this
         // workspace is missing from views_of_type above; without counting it here no window
         // ever adopted.
-        let own_tabs = self.uses_framed_sidebar_layout(ctx).then(|| self.tabs.len());
+        let own_tabs = self
+            .uses_framed_sidebar_layout(ctx)
+            .then(|| self.tabs.len());
         tmux_adopt::count_own_window(&mut windows, self.window_id, own_tabs);
         tmux_adopt::pick_adopter(&windows) == Some(self.window_id)
     }
@@ -1669,10 +1703,12 @@ const TMUX_RENAME_SETTLE: std::time::Duration = std::time::Duration::from_secs(5
 const TMUX_RENAME_WARN: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[cfg(not(target_family = "wasm"))]
-mod tmux_agents {
+pub(in crate::workspace::view) mod tmux_agents {
     use std::collections::{HashMap, HashSet};
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::process::Command;
+
+    use tmux_control::tmux_binary;
 
     const AGENT_PROCESS_NAMES: [&str; 2] = ["claude", "codex"];
 
@@ -1684,8 +1720,10 @@ mod tmux_agents {
     /// as no tmux or no server, yields an empty set.
     pub(super) fn tmux_agent_shell_pids() -> HashSet<u32> {
         let tmux = tmux_binary();
-        let Some(panes) = run(tmux, &["list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}"])
-        else {
+        let Some(panes) = run(
+            tmux,
+            &["list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}"],
+        ) else {
             return HashSet::new();
         };
         let Some(processes) = run("/bin/ps", &["-A", "-o", "pid=,ppid=,comm="]) else {
@@ -1709,8 +1747,10 @@ mod tmux_agents {
             return HashSet::new();
         }
 
-        let Some(clients) = run(tmux, &["list-clients", "-F", "#{client_pid}\t#{session_name}"])
-        else {
+        let Some(clients) = run(
+            tmux,
+            &["list-clients", "-F", "#{client_pid}\t#{session_name}"],
+        ) else {
             return HashSet::new();
         };
         let mut shells = HashSet::new();
@@ -1992,14 +2032,6 @@ mod tmux_agents {
         }
     }
 
-    // The app does not inherit a login shell's PATH, so look in the usual install locations.
-    fn tmux_binary() -> &'static str {
-        ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"]
-            .into_iter()
-            .find(|path| Path::new(path).exists())
-            .unwrap_or("tmux")
-    }
-
     fn run(program: &str, args: &[&str]) -> Option<String> {
         let output = Command::new(program).args(args).output().ok()?;
         output
@@ -2184,7 +2216,10 @@ pub(in crate::workspace::view) mod tmux_layout {
             .iter()
             .map(|name| {
                 if app.contains(name) {
-                    known_in_list.next().cloned().unwrap_or_else(|| name.clone())
+                    known_in_list
+                        .next()
+                        .cloned()
+                        .unwrap_or_else(|| name.clone())
                 } else {
                     name.clone()
                 }

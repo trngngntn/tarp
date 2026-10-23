@@ -3830,8 +3830,10 @@ impl Element for BlockListElement {
             if visible_idx == 0 {
                 if let VisibleItem::Block { block_index, .. } = block_entry {
                     if let Some(block) = model.block_list().block_at(*block_index) {
+                        // A raw (tmux) block has no command to pin, and a header would shift
+                        // the grid rows the renderer paints.
                         snackbar_header = self.snackbar_header_state().update(
-                            self.snackbar_header_state.snackbar_enabled,
+                            self.snackbar_header_state.snackbar_enabled && !model.is_raw(),
                             self.snackbar_header_state.show_snackbar,
                             block,
                             grid_origin,
@@ -4919,3 +4921,7 @@ where
 
     button.finish()
 }
+
+#[cfg(test)]
+#[path = "block_list_element_tests.rs"]
+mod tests;

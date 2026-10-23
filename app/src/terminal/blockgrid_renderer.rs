@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ops::{Neg, RangeInclusive};
+use std::ops::{Neg, Range, RangeInclusive};
 
 use pathfinder_color::ColorU;
 use warpui::fonts::{FamilyId, Properties, Weight};
@@ -107,19 +107,8 @@ impl BlockGridRenderer for BlockGrid {
         ctx: &mut PaintContext,
         app: &AppContext,
     ) {
-        let start_row = hidden_rows_above(
-            grid_origin,
-            origin,
-            block_grid_params.grid_render_params.cell_size,
-        );
-        let hidden_rows_below = hidden_rows_below(
-            grid_origin,
-            origin,
-            block_grid_params.grid_render_params.cell_size,
-            block_grid_params.bounds,
-            self.len_displayed(),
-        );
-        let end_row = self.len_displayed().saturating_sub(hidden_rows_below);
+        let Range { start, end } =
+            painted_rows(grid_origin, origin, block_grid_params, self.len_displayed());
 
         let grid = self.grid_handler();
 
@@ -129,8 +118,8 @@ impl BlockGridRenderer for BlockGrid {
             .and(&grid.get_secret_obfuscation());
         render_grid(
             grid,
-            start_row,
-            end_row,
+            start,
+            end,
             &block_grid_params.colors,
             &block_grid_params.override_colors,
             &block_grid_params.grid_render_params.warp_theme,
@@ -248,6 +237,18 @@ fn lines_to_pixels(line: usize, cell_size: Vector2F) -> Vector2F {
 
 fn pixels_to_lines(coord: Vector2F, cell_size: Vector2F) -> usize {
     (coord.y() / cell_size.y()) as usize
+}
+
+/// The rows of a grid at `grid_origin` that fall within a viewport at `origin`.
+pub(super) fn painted_rows(
+    grid_origin: Vector2F,
+    origin: Vector2F,
+    params: &BlockGridParams,
+    grid_len: usize,
+) -> Range<usize> {
+    let cell_size = params.grid_render_params.cell_size;
+    let below = hidden_rows_below(grid_origin, origin, cell_size, params.bounds, grid_len);
+    hidden_rows_above(grid_origin, origin, cell_size)..grid_len.saturating_sub(below)
 }
 
 /// Computes the number of rows that are not visible in the current grid above the viewport.

@@ -302,6 +302,7 @@ winit = { workspace = true }
 wgpu.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+tmux_control.workspace = true
 app-installation-detection.workspace = true
 async-io.workspace = true
 axum.workspace = true
@@ -445,6 +446,7 @@ warp_files = { workspace = true, features = ["test-util"] }
 repo_metadata = { workspace = true, features = ["test-util"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+tmux_control = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "time", "test-util"] }
 
 [build-dependencies]
@@ -670,6 +672,7 @@ default = [
     "tab_configs",
     "grouped_tabs",
     "pinned_tabs",
+    "tmux_control_mode",
     "agent_harness",
     "hoa_onboarding_flow",
     "hoa_remote_control",
@@ -816,6 +819,7 @@ remote_tty = ["warp_terminal/remote_tty"]
 # Fix for cursor reflow bug during window resize, from Alacritty resizing logic.
 resize_fix = []
 pluggable_notifications = []
+tmux_control_mode = []
 # This enables `read_files` to support images.
 read_image_files = []
 # Enable this feature to automatically perform CPU profiling via pprof.  The
