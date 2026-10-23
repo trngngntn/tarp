@@ -336,3 +336,32 @@ fn moving_to_another_session_detaches() {
         ));
     });
 }
+
+#[test]
+fn windows_added_while_listing_are_not_lost() {
+    App::test((), |mut app| async move {
+        let fixture = Fixture::new(&mut app);
+        let (mut tmux, _connection) = fixture.connect(&mut app);
+        tmux.handshake("demo", "3.8");
+        assert_eq!(read_command(&mut tmux).await, commands::list_windows());
+        tmux.send("%window-add @1");
+        tmux.send("%window-add @2");
+        warpui::r#async::Timer::after(W).await;
+        tmux.reply(&["@0 %0 zsh", "@1 %1 claude"]);
+        assert!(matches!(
+            fixture.next_event().await,
+            TmuxControlEvent::Attached { .. }
+        ));
+        // @1 was listed, so only @2 is described.
+        assert_eq!(
+            read_command(&mut tmux).await,
+            commands::describe_window(TmuxWindowId(2))
+        );
+        tmux.reply(&["@2 %2 build"]);
+        assert!(matches!(
+            fixture.next_event().await,
+            TmuxControlEvent::WindowAdded { window, .. } if window == info(2, 2, "build")
+        ));
+        assert_eq!(tmux.try_read_command(W), None);
+    });
+}

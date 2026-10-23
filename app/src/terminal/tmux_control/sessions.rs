@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::mem;
 
 use tmux_control::commands::{self, WindowInfo};
 use tmux_control::connection::{
@@ -66,6 +67,8 @@ enum LinkState {
     /// Not yet attached; `failed` once an `AttachFailed` was emitted for it.
     Pending {
         failed: bool,
+        /// Replayed once attached, as they may postdate the window list.
+        notifications: Vec<Notification>,
     },
     Attached(TmuxSessionKey),
     /// Its session was already attached through another connection, which it left to.
@@ -178,7 +181,10 @@ impl TmuxControlSessions {
             id,
             Link {
                 owner_window,
-                state: LinkState::Pending { failed: false },
+                state: LinkState::Pending {
+                    failed: false,
+                    notifications: Vec::new(),
+                },
             },
         );
         ctx.spawn_stream_local(
@@ -267,7 +273,7 @@ impl TmuxControlSessions {
         let Some(link) = self.links.get(&id) else {
             return;
         };
-        if matches!(link.state, LinkState::Pending { failed: true }) {
+        if matches!(link.state, LinkState::Pending { failed: true, .. }) {
             return;
         }
         if self.sessions.contains_key(&key) {
@@ -283,9 +289,14 @@ impl TmuxControlSessions {
                 return;
             }
         };
-        if let Some(link) = self.links.get_mut(&id) {
-            link.state = LinkState::Attached(key);
-        }
+        let notifications = match self
+            .links
+            .get_mut(&id)
+            .map(|link| mem::replace(&mut link.state, LinkState::Attached(key)))
+        {
+            Some(LinkState::Pending { notifications, .. }) => notifications,
+            Some(LinkState::Attached(_) | LinkState::Superseded) | None => Vec::new(),
+        };
         self.sessions.insert(
             key,
             AttachedSession {
@@ -303,6 +314,9 @@ impl TmuxControlSessions {
             connection,
             windows,
         });
+        for notification in notifications {
+            self.handle_notification(id, notification, ctx);
+        }
     }
 
     fn finish_relist(
@@ -339,15 +353,22 @@ impl TmuxControlSessions {
         notification: Notification,
         ctx: &mut ModelContext<Self>,
     ) {
-        let Some(LinkState::Attached(key)) = self.links.get(&id).map(|link| &link.state) else {
-            return;
+        let key = match self.links.get_mut(&id).map(|link| &mut link.state) {
+            Some(LinkState::Attached(key)) => *key,
+            Some(LinkState::Pending {
+                failed: false,
+                notifications,
+            }) => {
+                notifications.push(notification);
+                return;
+            }
+            Some(LinkState::Pending { failed: true, .. } | LinkState::Superseded) | None => return,
         };
-        let key = *key;
         let Some(session) = self.sessions.get_mut(&key) else {
             return;
         };
         match notification {
-            Notification::WindowAdd(window) => {
+            Notification::WindowAdd(window) if !session.open_windows.contains(&window) => {
                 let describe = describe_window(&session.connection, window);
                 ctx.spawn(describe, move |me, windows, ctx| {
                     if let Ok(windows) = windows
@@ -373,6 +394,7 @@ impl TmuxControlSessions {
                 self.detach(key, ctx);
             }
             Notification::Output { .. }
+            | Notification::WindowAdd(_)
             | Notification::UnlinkedWindowAdd(_)
             | Notification::UnlinkedWindowClose(_)
             | Notification::UnlinkedWindowRenamed { .. }
@@ -409,7 +431,7 @@ impl TmuxControlSessions {
         let Some(link) = self.links.get_mut(&id) else {
             return;
         };
-        if let LinkState::Pending { failed } = &mut link.state
+        if let LinkState::Pending { failed, .. } = &mut link.state
             && !*failed
         {
             *failed = true;
@@ -425,11 +447,11 @@ impl TmuxControlSessions {
             return;
         };
         match link.state {
-            LinkState::Pending { failed: false } => ctx.emit(TmuxControlEvent::AttachFailed {
+            LinkState::Pending { failed: false, .. } => ctx.emit(TmuxControlEvent::AttachFailed {
                 owner_window: link.owner_window,
                 message: reason.unwrap_or_else(|| "tmux exited".to_owned()),
             }),
-            LinkState::Pending { failed: true } | LinkState::Superseded => {}
+            LinkState::Pending { failed: true, .. } | LinkState::Superseded => {}
             LinkState::Attached(key) => {
                 if self
                     .sessions
