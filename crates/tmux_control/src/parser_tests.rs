@@ -189,13 +189,3 @@ fn small_notifications() {
         n(Notification::Other("%client-detached /dev/x".into()))
     );
 }
-
-#[test]
-fn ready_only_after_the_first_block_closes() {
-    let mut p = ControlParser::new();
-    assert!(!p.is_ready());
-    p.push_line(b"%begin 1 315 0");
-    assert!(!p.is_ready());
-    p.push_line(b"%end 1 315 0");
-    assert!(p.is_ready());
-}

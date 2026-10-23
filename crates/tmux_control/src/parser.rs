@@ -71,28 +71,14 @@ struct Block {
     body: Vec<Vec<u8>>,
 }
 
+#[derive(Default)]
 pub struct ControlParser {
     block: Option<Block>,
-    ready: bool,
-}
-
-impl Default for ControlParser {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl ControlParser {
     pub fn new() -> Self {
-        Self {
-            block: None,
-            ready: false,
-        }
-    }
-
-    /// True once the reply tmux sends on attach has closed.
-    pub fn is_ready(&self) -> bool {
-        self.ready
+        Self::default()
     }
 
     /// Feeds one line without its trailing `\n`.
@@ -105,7 +91,6 @@ impl ControlParser {
                 if (time, number, flags) == (block.time, block.number, block.flags) =>
             {
                 let block = self.block.take()?;
-                self.ready = true;
                 Some(ControlEvent::Reply(CommandReply {
                     time,
                     number,
